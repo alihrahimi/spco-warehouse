@@ -1,0 +1,595 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+/// SQLite for local development (checked in so `npm run db:setup` works with
+/// zero manual configuration — no server to install or connect to).
+/// Deliberately provider-agnostic beyond this line: no Postgres-only native
+/// types (`@db.Uuid`/`@db.Timestamptz`/`@db.VarChar`), no Prisma `enum`
+/// blocks (SQLite has no enum type at all — every former enum below is now
+/// a plain `String`, validated by the matching union type + Zod schema in
+/// `src/lib/enums.ts`, not by the database). Moving to production Postgres
+/// is exactly the three steps documented in `docs/DEPLOYMENT.md`: flip this
+/// `provider` to `"postgresql"`, point `DATABASE_URL` at the Postgres
+/// instance, run migrations — `src/lib/db.ts` and `prisma.config.ts` already
+/// pick the matching driver adapter from the `DATABASE_URL` scheme, so no
+/// other file changes.
+datasource db {
+  provider = "sqlite"
+}
+
+// =========================================================
+// Users & Roles
+// =========================================================
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  users User[]
+
+  @@map("roles")
+}
+
+/// `status` values: active | inactive | suspended — see `UserStatus` in `src/lib/enums.ts`.
+model User {
+  id           String    @id @default(uuid())
+  roleId       String    @map("role_id")
+  username     String    @unique
+  passwordHash String    @map("password_hash")
+  fullName     String    @map("full_name")
+  status       String    @default("active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  role                      Role              @relation(fields: [roleId], references: [id])
+  ordersCreated             Order[]           @relation("OrderCreatedBy")
+  paymentsCreated           Payment[]         @relation("PaymentCreatedBy")
+  invoiceDocumentsGenerated InvoiceDocument[] @relation("InvoiceDocumentGeneratedBy")
+  authEventsAsUser          AuthAuditLog[]    @relation("AuthAuditLogUser")
+  authEventsPerformed       AuthAuditLog[]    @relation("AuthAuditLogPerformedBy")
+  auditLogsPerformed        AuditLog[]        @relation("AuditLogPerformedBy")
+  priceHistoryChanged       PriceHistory[]    @relation("PriceHistoryChangedBy")
+  orderVersionsCreated      OrderVersion[]    @relation("OrderVersionCreatedBy")
+
+  @@index([roleId])
+  @@index([status])
+  @@map("users")
+}
+
+/// One row per authentication event (Phase 10 requirement). `userId` is the
+/// affected account; `performedById` is set only when the actor differs
+/// from the affected account (an admin resetting someone else's password) —
+/// null means self-service. `attemptedUsername` captures what was actually
+/// typed on a failed login even when it matches no real user, since a
+/// failed attempt on a nonexistent username has no `userId` to attach to.
+/// `eventType` values: see `AuthEventType` in `src/lib/enums.ts`.
+model AuthAuditLog {
+  id                String   @id @default(uuid())
+  eventType         String   @map("event_type")
+  userId            String?  @map("user_id")
+  attemptedUsername String?  @map("attempted_username")
+  performedById     String?  @map("performed_by")
+  ipAddress         String?  @map("ip_address")
+  userAgent         String?  @map("user_agent")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  user        User? @relation("AuthAuditLogUser", fields: [userId], references: [id])
+  performedBy User? @relation("AuthAuditLogPerformedBy", fields: [performedById], references: [id])
+
+  @@index([userId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("auth_audit_logs")
+}
+
+/// One row per tracked business-data change (Phase 11: Customer Created/
+/// Updated/StatusChanged/PaymentTypeChanged; Products and Orders reuse
+/// this in later phases). `changes` optionally captures a before/after
+/// diff for fields worth showing in a history view (e.g. status
+/// transitions) — omitted for actions where the full new state is enough.
+/// `action` values: see `AuditAction` in `src/lib/enums.ts`.
+model AuditLog {
+  id            String   @id @default(uuid())
+  entityType    String   @map("entity_type")
+  entityId      String   @map("entity_id")
+  action        String
+  performedById String   @map("performed_by")
+  changes       Json?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  performedBy User @relation("AuditLogPerformedBy", fields: [performedById], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([performedById])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// =========================================================
+// Customers
+// =========================================================
+
+/// `customerCode` (e.g. `C000001`) is drawn once at creation from the
+/// `CodeSequence` counter row keyed `"customer"` (see that model) and never
+/// changes — it is the customer's permanent identity, independent of name/
+/// mobile edits. `status` (not `deletedAt`) is the operative "soft delete"
+/// per Phase 11: deactivating a customer sets `status = inactive`, never
+/// removes the row or touches `deletedAt`, which remains reserved for a
+/// genuine hard-delete safeguard that the product surface never triggers.
+/// `defaultPaymentType` values: see `PaymentMethod`; `status` values: see
+/// `CustomerStatus` — both in `src/lib/enums.ts`.
+model Customer {
+  id                 String    @id @default(uuid())
+  customerCode       String    @unique @map("customer_code")
+  name               String
+  mobile             String
+  phone              String?
+  province           String?
+  city               String?
+  address            String?
+  notes              String?
+  defaultPaymentType String    @map("default_payment_type")
+  status             String    @default("active")
+  isFavorite         Boolean   @default(false) @map("is_favorite")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  deletedAt          DateTime? @map("deleted_at")
+
+  orders Order[]
+
+  @@index([mobile])
+  @@index([name])
+  @@index([status])
+  @@index([isFavorite])
+  @@index([city])
+  @@map("customers")
+}
+
+// =========================================================
+// Product Catalog: Category -> Product (Design) -> Piece -> Size
+// =========================================================
+
+model ProductCategory {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  products Product[]
+
+  @@map("product_categories")
+}
+
+/// `productCode` (e.g. `P000001`) is drawn once at creation from the
+/// `CodeSequence` counter row keyed `"product"` — same permanent-identity
+/// pattern as `Customer.customerCode`. `isActive` (not `deletedAt`) is the
+/// operative soft delete, per Phase 12: deactivating a product never
+/// removes the row, and every historical `OrderItem` referencing it (via
+/// its frozen name/price snapshot) stays valid regardless of catalog
+/// changes.
+model Product {
+  id            String    @id @default(uuid())
+  productCode   String    @unique @map("product_code")
+  categoryId    String    @map("category_id")
+  name          String
+  description   String?
+  imageFilePath String?   @map("image_file_path")
+  isActive      Boolean   @default(true) @map("is_active")
+  isFavorite    Boolean   @default(false) @map("is_favorite")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  category ProductCategory @relation(fields: [categoryId], references: [id])
+  pieces   ProductPiece[]
+
+  @@index([categoryId])
+  @@index([isActive])
+  @@index([isFavorite])
+  @@index([updatedAt])
+  @@map("products")
+}
+
+model ProductPiece {
+  id        String    @id @default(uuid())
+  productId String    @map("product_id")
+  name      String
+  sortOrder Int       @default(0) @map("sort_order")
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  product Product            @relation(fields: [productId], references: [id])
+  sizes   ProductPieceSize[]
+
+  @@unique([productId, name])
+  @@index([productId])
+  @@map("product_pieces")
+}
+
+model Size {
+  id        String   @id @default(uuid())
+  label     String   @unique
+  sortOrder Int      @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  productPieceSizes ProductPieceSize[]
+
+  @@map("sizes")
+}
+
+/// The actual priced, sellable unit: a piece at a given size.
+model ProductPieceSize {
+  id              String    @id @default(uuid())
+  productPieceId  String    @map("product_piece_id")
+  sizeId          String    @map("size_id")
+  unitPrice       BigInt    @map("unit_price")
+  defaultPackSize Int       @default(6) @map("default_pack_size")
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  productPiece ProductPiece   @relation(fields: [productPieceId], references: [id])
+  size         Size           @relation(fields: [sizeId], references: [id])
+  orderItems   OrderItem[]
+  priceHistory PriceHistory[]
+
+  @@unique([productPieceId, sizeId])
+  @@index([sizeId])
+  @@map("product_piece_sizes")
+}
+
+/// One row per price change on a `ProductPieceSize` (Phase 12) — separate
+/// from the generic `AuditLog` (which also gets a `price_updated` entry for
+/// the unified trail) because this needs structured `oldPrice`/`newPrice`
+/// fields a JSON `changes` blob would make awkward to query/display in a
+/// dedicated price-history view. Covers both a single manual price edit
+/// and each row touched by a bulk update.
+model PriceHistory {
+  id                 String   @id @default(uuid())
+  productPieceSizeId String   @map("product_piece_size_id")
+  oldPrice           BigInt   @map("old_price")
+  newPrice           BigInt   @map("new_price")
+  reason             String?
+  changedById        String   @map("changed_by")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  productPieceSize ProductPieceSize @relation(fields: [productPieceSizeId], references: [id])
+  changedBy        User             @relation("PriceHistoryChangedBy", fields: [changedById], references: [id])
+
+  @@index([productPieceSizeId])
+  @@index([createdAt])
+  @@map("price_history")
+}
+
+// =========================================================
+// Orders
+// =========================================================
+
+/// `orderNumber` is null while an order is a draft — the yearly sequence
+/// number (`1405-000001`) is drawn only when the draft is converted to a
+/// pre-invoice, so abandoned drafts never consume numbers. A unique
+/// constraint over a nullable column allows many nulls while still
+/// enforcing uniqueness on every real number (true on both SQLite and
+/// Postgres). `notes` is the staff-only internal note (never printed);
+/// `customerNotes` is the optional note printed on the pre-invoice — Phase
+/// 13 requires both, separately. `status` values: see `OrderStatus` in
+/// `src/lib/enums.ts`.
+model Order {
+  id                    String    @id @default(uuid())
+  orderNumber           String?   @unique @map("order_number")
+  jalaliYear            Int       @map("jalali_year")
+  customerId            String    @map("customer_id")
+  status                String    @default("draft")
+  subtotal              BigInt
+  totalAmount           BigInt    @map("total_amount")
+  notes                 String?
+  customerNotes         String?   @map("customer_notes")
+  version               Int       @default(1)
+  preInvoiceGeneratedAt DateTime? @map("pre_invoice_generated_at")
+  createdById           String    @map("created_by")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  deletedAt             DateTime? @map("deleted_at")
+
+  customer           Customer            @relation(fields: [customerId], references: [id])
+  createdBy          User                @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  items              OrderItem[]
+  payments           Payment[]
+  notificationEvents NotificationEvent[]
+  invoiceDocument    InvoiceDocument?
+  versions           OrderVersion[]
+
+  // paid_amount / remaining_amount are intentionally NOT stored columns.
+  // They are always derived from SUM(payments.amount) at read time to avoid drift
+  // from the payments table, which is the single source of truth for money received.
+
+  @@index([customerId])
+  @@index([status])
+  @@index([jalaliYear, status])
+  @@index([createdAt])
+  @@map("orders")
+}
+
+/// Immutable snapshot of an order's full line-item state at the moment a
+/// version was superseded (Phase 13: every modification after pre-invoice
+/// generation creates a new version). `snapshot` holds the complete
+/// serialized items/totals/notes as they were BEFORE the change, so
+/// administrators can review exactly what each earlier version said.
+model OrderVersion {
+  id            String   @id @default(uuid())
+  orderId       String   @map("order_id")
+  versionNumber Int      @map("version_number")
+  snapshot      Json
+  reason        String?
+  createdById   String   @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  order     Order @relation(fields: [orderId], references: [id])
+  createdBy User  @relation("OrderVersionCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([orderId, versionNumber])
+  @@index([orderId])
+  @@map("order_versions")
+}
+
+/// Snapshots product/piece/size/price at order time so historical invoices
+/// never change when the catalog changes later.
+///
+/// Phase 13 replaced the original single `orderType`+`quantity` pair with
+/// simultaneous `packQuantity` AND `unitQuantity` — that phase's explicit
+/// rule is that every size accepts both at once and the user is never
+/// asked to choose a mode. `totalUnits` is always
+/// `packQuantity × packSizeSnapshot + unitQuantity`, and `totalPrice` is
+/// `totalUnits × unitPriceSnapshot` — both stored (not derived at read
+/// time) because they are part of the frozen historical record.
+/// One row per (order, piece+size): the unique constraint is the schema-
+/// level guard behind Phase 13's "prevent duplicate items" validation.
+model OrderItem {
+  id                  String   @id @default(uuid())
+  orderId             String   @map("order_id")
+  productPieceSizeId  String   @map("product_piece_size_id")
+  productNameSnapshot String   @map("product_name_snapshot")
+  productCodeSnapshot String   @map("product_code_snapshot")
+  pieceNameSnapshot   String   @map("piece_name_snapshot")
+  sizeLabelSnapshot   String   @map("size_label_snapshot")
+  packQuantity        Int      @map("pack_quantity")
+  unitQuantity        Int      @map("unit_quantity")
+  packSizeSnapshot    Int      @map("pack_size_snapshot")
+  totalUnits          Int      @map("total_units")
+  unitPriceSnapshot   BigInt   @map("unit_price_snapshot")
+  totalPrice          BigInt   @map("total_price")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  order            Order            @relation(fields: [orderId], references: [id])
+  productPieceSize ProductPieceSize @relation(fields: [productPieceSizeId], references: [id])
+
+  @@unique([orderId, productPieceSizeId])
+  @@index([orderId])
+  @@index([productPieceSizeId])
+  @@map("order_items")
+}
+
+// =========================================================
+// Payments
+// =========================================================
+
+/// `chequeBankName`/`chequeIssueDate` added in Phase 13, which requires the
+/// full cheque record (number, bank, amount, issue date, due date,
+/// description) — `notes` doubles as the cheque description field.
+/// `paymentMethod` values: see `PaymentMethod`; `cashPaymentType` values:
+/// see `CashPaymentType` — both in `src/lib/enums.ts`.
+model Payment {
+  id              String    @id @default(uuid())
+  orderId         String    @map("order_id")
+  paymentMethod   String    @map("payment_method")
+  cashPaymentType String?   @map("cash_payment_type")
+  amount          BigInt
+  chequeNumber    String?   @map("cheque_number")
+  chequeBankName  String?   @map("cheque_bank_name")
+  chequeIssueDate DateTime? @map("cheque_issue_date")
+  chequeDueDate   DateTime? @map("cheque_due_date")
+  paidAt          DateTime  @map("paid_at")
+  notes           String?
+  createdById     String    @map("created_by")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  order     Order @relation(fields: [orderId], references: [id])
+  createdBy User  @relation("PaymentCreatedBy", fields: [createdById], references: [id])
+
+  @@index([orderId])
+  @@index([paymentMethod])
+  @@map("payments")
+}
+
+// =========================================================
+// Invoice Settings
+// =========================================================
+
+/// Singleton row: application enforces exactly one InvoiceSettings record exists.
+model InvoiceSettings {
+  id                String   @id @default(uuid())
+  numberPrefix      String   @default("INV") @map("number_prefix")
+  footerNote        String?  @map("footer_note")
+  showLogoOnInvoice Boolean  @default(true) @map("show_logo_on_invoice")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("invoice_settings")
+}
+
+/// One row per Persian (Jalali) year; last_number is incremented transactionally
+/// when an order number is issued, giving reset-per-year sequential numbering.
+model InvoiceSequence {
+  id         String   @id @default(uuid())
+  jalaliYear Int      @unique @map("jalali_year")
+  lastNumber Int      @default(0) @map("last_number")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("invoice_sequences")
+}
+
+/// Portable replacement for a native Postgres `SEQUENCE` (SQLite has no
+/// such object). One row per permanent-identity code series — today
+/// `"customer"` and `"product"` (see `src/lib/customer/customer-code.ts` /
+/// `src/lib/product/product-code.ts`) — incremented transactionally via
+/// Prisma's `update ... increment`, the exact same atomic-claim pattern
+/// `InvoiceSequence` already uses. Gaps are acceptable here (unlike order
+/// numbers): a rolled-back customer/product creation simply never reuses
+/// its claimed number, same guarantee a Postgres sequence gave.
+model CodeSequence {
+  id         String   @id @default(uuid())
+  key        String   @unique
+  lastNumber Int      @default(0) @map("last_number")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("code_sequences")
+}
+
+/// Created once, at the moment an order's invoice is first generated. Freezes the
+/// company identity shown on that document so later edits to CompanySettings never
+/// change a historical invoice — the same guarantee OrderItem already gives for
+/// catalog data. One row per order (unique orderId): first generation wins, every
+/// later re-print/re-export reads this row instead of live CompanySettings.
+///
+/// IMPORTANT: companyLogoSnapshot must point to an immutable file (e.g. a
+/// timestamped/versioned filename). If a new logo upload overwrites the same path
+/// in place, this snapshot silently breaks — the StorageProvider must never let a
+/// logo upload reuse an existing file path.
+model InvoiceDocument {
+  id                   String   @id @default(uuid())
+  orderId              String   @unique @map("order_id")
+  companyNameSnapshot  String   @map("company_name_snapshot")
+  companyLogoSnapshot  String?  @map("company_logo_snapshot")
+  phoneNumbersSnapshot Json     @map("phone_numbers_snapshot")
+  whatsappSnapshot     String?  @map("whatsapp_snapshot")
+  telegramSnapshot     String?  @map("telegram_snapshot")
+  instagramSnapshot    String?  @map("instagram_snapshot")
+  addressSnapshot      String?  @map("address_snapshot")
+  footerTextSnapshot   String?  @map("footer_text_snapshot")
+  /// Nullable (Phase 13): the company-info snapshot is frozen the moment
+  /// the pre-invoice is generated, but the PDF file itself is rendered on
+  /// first export and stored then — snapshot creation must never be
+  /// blocked by a PDF renderer being temporarily unavailable.
+  pdfFilePath          String?  @map("pdf_file_path")
+  generatedAt          DateTime @map("generated_at")
+  generatedById        String   @map("generated_by")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  order       Order @relation(fields: [orderId], references: [id])
+  generatedBy User  @relation("InvoiceDocumentGeneratedBy", fields: [generatedById], references: [id])
+
+  @@map("invoice_documents")
+}
+
+// =========================================================
+// Company Settings
+// =========================================================
+
+/// Singleton row: application enforces exactly one CompanySettings record exists.
+model CompanySettings {
+  id              String   @id @default(uuid())
+  companyName     String   @map("company_name")
+  managerName     String?  @map("manager_name")
+  logoFilePath    String?  @map("logo_file_path")
+  whatsappNumber  String?  @map("whatsapp_number")
+  telegramHandle  String?  @map("telegram_handle")
+  instagramHandle String?  @map("instagram_handle")
+  address         String?
+  footerText      String?  @map("footer_text")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  phoneNumbers CompanyPhoneNumber[]
+
+  @@map("company_settings")
+}
+
+/// `kind` values: mobile | telephone — see `PhoneKind` in `src/lib/enums.ts`.
+model CompanyPhoneNumber {
+  id                String   @id @default(uuid())
+  companySettingsId String   @map("company_settings_id")
+  phoneNumber       String   @map("phone_number")
+  /// Phase 14 distinguishes mobile numbers from landline telephone numbers as separate editable lists.
+  kind              String   @default("telephone")
+  label             String?
+  sortOrder         Int      @map("sort_order")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  companySettings CompanySettings @relation(fields: [companySettingsId], references: [id])
+
+  @@index([companySettingsId])
+  @@map("company_phone_numbers")
+}
+
+// =========================================================
+// Notifications
+// =========================================================
+
+/// `channel` values: see `NotificationChannel`; `status` values: see
+/// `NotificationStatus` — both in `src/lib/enums.ts`.
+model NotificationEvent {
+  id             String    @id @default(uuid())
+  channel        String
+  eventType      String    @map("event_type")
+  relatedOrderId String?   @map("related_order_id")
+  recipient      String
+  messageBody    String    @map("message_body")
+  status         String    @default("pending")
+  errorMessage   String?   @map("error_message")
+  sentAt         DateTime? @map("sent_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  relatedOrder Order? @relation(fields: [relatedOrderId], references: [id])
+
+  @@index([status])
+  @@index([relatedOrderId])
+  @@map("notification_events")
+}
+
+model NotificationSettings {
+  id             String   @id @default(uuid())
+  eventType      String   @unique @map("event_type")
+  isEnabled      Boolean  @default(true) @map("is_enabled")
+  telegramChatId String?  @map("telegram_chat_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("notification_settings")
+}
+
+// =========================================================
+// Application Settings
+// =========================================================
+
+/// `valueType` values: see `SettingValueType` in `src/lib/enums.ts`.
+model ApplicationSetting {
+  id           String   @id @default(uuid())
+  settingKey   String   @unique @map("setting_key")
+  settingValue String   @map("setting_value")
+  valueType    String   @map("value_type")
+  description  String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("application_settings")
+}
