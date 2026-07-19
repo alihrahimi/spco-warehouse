@@ -160,6 +160,16 @@
 html,
 body {
   height: 100%;
+  /*
+   * Hard backstop: no descendant's overflow (e.g. a wide flex row that
+   * can't fully shrink, like TopNav's actions cluster on narrow viewports)
+   * may ever widen the document itself. iOS Safari/PWA turns any such
+   * document-level overflow into a whole-page horizontal pan gesture,
+   * which is the bug this rule exists to make structurally impossible.
+   * The elements that legitimately need horizontal scroll (TopNav's
+   * actions row) get their own `overflow-x-auto` region instead.
+   */
+  overflow-x: hidden;
 }
 
 body {

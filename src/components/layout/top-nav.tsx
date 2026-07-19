@@ -59,7 +59,15 @@ export function TopNav({ title, onBack, breadcrumb, actions, titleHref, logoSrc 
           titleContent
         )}
       </div>
-      {actions ? <div className="flex shrink-0 items-center gap-3">{actions}</div> : null}
+      {actions ? (
+        // min-w-0 + flex-1 let this cluster shrink to the space actually left by the
+        // title group; overflow-x-auto gives it its own scroll region so a too-wide
+        // row of nav items scrolls *here* instead of forcing the whole header (and
+        // therefore the document) wider than the viewport.
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-3 overflow-x-auto">
+          {actions}
+        </div>
+      ) : null}
     </header>
   );
 }
