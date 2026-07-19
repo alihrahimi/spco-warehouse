@@ -734,3 +734,116 @@ export async function searchProductsForOrder(query: string): Promise<
     select: { id: true, productCode: true, name: true, imageFilePath: true },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Accounting Helper support — additive extension, nothing above changed.
+// Deliberately separate query functions from the order-builder ones above:
+// Accounting Helper prepares entries for OFFICIAL PAPER INVOICES that may
+// reference a product/piece after it was deactivated, so (unlike the order
+// flow) inactive rows are never excluded here — only soft-deleted ones.
+// ---------------------------------------------------------------------------
+
+export async function updateAccountingCode(productPieceSizeId: string, code: string, performedById: string): Promise<ServiceResult<{ accountingCode: string | null }>> {
+  const trimmed = code.trim();
+  const nextCode = trimmed === "" ? null : trimmed;
+
+  const existing = await db.productPieceSize.findUnique({ where: { id: productPieceSizeId } });
+  if (!existing) return { success: false, error: "این ترکیب قطعه/سایز یافت نشد" };
+  if (existing.accountingCode === nextCode) return { success: true, data: { accountingCode: nextCode } };
+
+  await db.productPieceSize.update({ where: { id: productPieceSizeId }, data: { accountingCode: nextCode } });
+
+  const piece = await db.productPiece.findUnique({ where: { id: existing.productPieceId } });
+  if (piece) {
+    await logAuditEvent({
+      entityType: AUDIT_ENTITY_TYPE,
+      entityId: piece.productId,
+      action: "accounting_code_updated",
+      performedById,
+      changes: { productPieceSizeId, oldCode: existing.accountingCode, newCode: nextCode },
+    });
+  }
+
+  return { success: true, data: { accountingCode: nextCode } };
+}
+
+/**
+ * The Design picker's full option list — includes inactive products (see
+ * file-header note), unlike `searchProductsForOrder`. Loaded once with no
+ * query and filtered client-side (the picker's built-in fuzzy search),
+ * rather than debounced per-keystroke server search: a single
+ * manufacturer's catalog is small enough that "load once" is both simpler
+ * and faster than a network round-trip per keystroke. `query` stays
+ * accepted for a future narrower search if the catalog ever outgrows that.
+ */
+export async function searchProductsForAccounting(query: string): Promise<{ id: string; productCode: string; name: string }[]> {
+  const trimmed = query.trim();
+  return db.product.findMany({
+    where: {
+      deletedAt: null,
+      ...(trimmed
+        ? { OR: [{ name: { contains: trimmed, mode: "insensitive" } }, { productCode: { contains: trimmed, mode: "insensitive" } }] }
+        : {}),
+    },
+    orderBy: { name: "asc" },
+    take: trimmed ? 24 : 500,
+    select: { id: true, productCode: true, name: true },
+  });
+}
+
+export interface ProductForAccounting {
+  id: string;
+  productCode: string;
+  name: string;
+  pieces: {
+    id: string;
+    name: string;
+    sizes: {
+      productPieceSizeId: string;
+      sizeLabel: string;
+      accountingCode: string | null;
+    }[];
+  }[];
+}
+
+/**
+ * Every priced piece+size variant for one product, regardless of active
+ * status — only sizes with an actual `ProductPieceSize` row are included
+ * (an unpriced size has no row to carry an accounting code on).
+ */
+export async function getProductForAccounting(productId: string): Promise<ProductForAccounting | null> {
+  const product = await db.product.findUnique({
+    where: { id: productId, deletedAt: null },
+    include: {
+      pieces: {
+        where: { deletedAt: null },
+        orderBy: { sortOrder: "asc" },
+        include: {
+          sizes: {
+            where: { deletedAt: null },
+            include: { size: true },
+            orderBy: { size: { sortOrder: "asc" } },
+          },
+        },
+      },
+    },
+  });
+  if (!product) return null;
+
+  return {
+    id: product.id,
+    productCode: product.productCode,
+    name: product.name,
+    pieces: product.pieces
+      .filter((piece) => piece.sizes.length > 0)
+      .map((piece) => ({
+        id: piece.id,
+        name: piece.name,
+        sizes: piece.sizes.map((entry) => ({
+          productPieceSizeId: entry.id,
+          sizeLabel: entry.size.label,
+          accountingCode: entry.accountingCode,
+        })),
+      })),
+  };
+}

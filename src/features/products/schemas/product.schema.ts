@@ -40,6 +40,13 @@ export const priceAdjustmentSchema = z.object({
 
 export type PriceAdjustmentInput = z.infer<typeof priceAdjustmentSchema>;
 
+/** Empty string clears the code (stored as `null`); otherwise free-text — accounting codes aren't guaranteed numeric-only across every external system. */
+export const accountingCodeSchema = z.object({
+  code: z.string().trim().max(40, "کد حسابداری نباید بیشتر از ۴۰ کاراکتر باشد"),
+});
+
+export type AccountingCodeInput = z.infer<typeof accountingCodeSchema>;
+
 export const productSearchSchema = z.object({
   query: z.string().trim().optional(),
   isActive: z.boolean().optional(),

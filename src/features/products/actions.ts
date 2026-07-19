@@ -5,12 +5,14 @@ import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/lib/auth/session";
 import type { PriceAdjustment } from "@/lib/product/price-rounding";
 import {
+  accountingCodeSchema,
   categorySchema,
   pieceSchema,
   priceAdjustmentSchema,
   priceEntrySchema,
   productSchema,
   productSearchSchema,
+  type AccountingCodeInput,
   type CategoryInput,
   type PieceInput,
   type PriceAdjustmentInput,
@@ -32,18 +34,22 @@ import {
   getAllSizes,
   getCategories,
   getPriceHistory,
+  getProductForAccounting,
   listProducts,
   renameSize,
   reorderPieces,
   reorderSizes,
   toggleFavoriteProduct,
   getProductForOrder,
+  searchProductsForAccounting,
   searchProductsForOrder,
+  updateAccountingCode,
   updatePiece,
   updateProduct,
   uploadProductImage,
   upsertPieceSize,
   type PriceHistoryRow,
+  type ProductForAccounting,
   type ProductForOrder,
   type ProductListResult,
 } from "@/features/products/services";
@@ -349,5 +355,45 @@ export async function getProductForOrderAction(productId: string): Promise<Actio
   await requirePermission("products:view");
   const data = await getProductForOrder(productId);
   if (!data) return { success: false, error: "محصول یافت نشد یا غیرفعال است" };
+  return { success: true, data };
+}
+
+/** Inline-editable Accounting Code field on the product detail page (Accounting Helper's Products-page extension). */
+export async function updateAccountingCodeAction(
+  productPieceSizeId: string,
+  productId: string,
+  input: AccountingCodeInput,
+): Promise<ActionResult<{ accountingCode: string | null }>> {
+  const session = await requirePermission("products:edit");
+
+  const parsed = accountingCodeSchema.safeParse(input);
+  if (!parsed.success) {
+    return { success: false, error: "کد حسابداری معتبر نیست", fieldErrors: zodFieldErrors(parsed.error.issues) };
+  }
+
+  const result = await updateAccountingCode(productPieceSizeId, parsed.data.code, session.user.id);
+  if (!result.success) return { success: false, error: result.error };
+
+  revalidatePath(`/products/${productId}`);
+  return { success: true, data: result.data };
+}
+
+/**
+ * Accounting Helper's own reads (Tools section) — gated on `utilities:use`
+ * rather than `products:view`, since these exist solely to serve that one
+ * tool page, not general catalog browsing.
+ */
+export async function searchProductsForAccountingAction(
+  query: string,
+): Promise<ActionResult<{ id: string; productCode: string; name: string }[]>> {
+  await requirePermission("utilities:use");
+  const data = await searchProductsForAccounting(query);
+  return { success: true, data };
+}
+
+export async function getProductForAccountingAction(productId: string): Promise<ActionResult<ProductForAccounting>> {
+  await requirePermission("utilities:use");
+  const data = await getProductForAccounting(productId);
+  if (!data) return { success: false, error: "محصول یافت نشد" };
   return { success: true, data };
 }

@@ -27,6 +27,7 @@ export interface PieceWithSizes {
     productPieceSizeId: string | null;
     unitPrice: number | null;
     defaultPackSize: number | null;
+    accountingCode: string | null;
   }[];
 }
 
@@ -214,10 +215,11 @@ export function PieceEditor({
                       </FormField>
                     </div>
 
-                    <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-3 px-0 pb-1 text-body-small text-foreground-secondary">
+                    <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-3 px-0 pb-1 text-body-small text-foreground-secondary sm:grid-cols-[auto_1fr_1fr_1fr_auto]">
                       <span className="w-10">سایز</span>
                       <span>قیمت (تومان)</span>
                       <span>سایز بسته</span>
+                      <span className="hidden sm:inline">کد حسابداری</span>
                       <span />
                     </div>
                     {piece.sizes.map((size) => (

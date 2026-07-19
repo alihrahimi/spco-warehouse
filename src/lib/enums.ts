@@ -75,6 +75,7 @@ export const AUDIT_ACTIONS = [
   "invoice_printed",
   "pdf_exported",
   "invoice_images_exported",
+  "accounting_code_updated",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 

@@ -232,6 +232,11 @@ model ProductPieceSize {
   sizeId          String    @map("size_id")
   unitPrice       BigInt    @map("unit_price")
   defaultPackSize Int       @default(6) @map("default_pack_size")
+  /// Free-text code linking this exact piece+size variant to a row in the
+  /// external accounting software (Accounting Helper tool). Null until an
+  /// administrator/manager sets it from the Products page — independent of
+  /// price, so leaving it unset never blocks pricing or ordering.
+  accountingCode  String?   @map("accounting_code")
   isActive        Boolean   @default(true) @map("is_active")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")

@@ -55,6 +55,7 @@ export default async function ProductDetailsPage({ params }: ProductDetailsPageP
           productPieceSizeId: configured?.id ?? null,
           unitPrice: configured ? Number(configured.unitPrice) : null,
           defaultPackSize: configured?.defaultPackSize ?? null,
+          accountingCode: configured?.accountingCode ?? null,
         };
       }),
     };
