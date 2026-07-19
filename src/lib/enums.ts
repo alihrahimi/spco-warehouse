@@ -1,15 +1,13 @@
 /**
  * Canonical value sets for every column that used to be a Prisma `enum`.
  *
- * SQLite has no native enum type, so `schema.prisma` models these columns
- * as plain `String` (see the per-model comments there) — which also makes
- * the schema genuinely provider-swappable, since Postgres enums and SQLite
- * strings would otherwise need two different schemas. Prisma Client no
+ * These columns are plain `String` in `schema.prisma` (see the per-model
+ * comments there) rather than native Postgres enums — changing the set of
+ * allowed values (adding a status, renaming one) is then a plain data
+ * migration instead of a schema-level `ALTER TYPE`, and Prisma Client no
  * longer generates these as TS types/runtime objects, so this module is
- * now their single source of truth: the literal string values written to
- * the database are UNCHANGED from the old Postgres enum values (so no data
- * migration implication going the other way), only where the TypeScript
- * type comes from has moved.
+ * their single source of truth. The literal string values written to the
+ * database are unchanged from when these were native enums.
  *
  * Each constant is validated at the boundary by the matching Zod schema in
  * the owning feature's `schemas/*.ts` — the database itself no longer

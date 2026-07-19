@@ -486,12 +486,11 @@ export async function listOrders(params: OrderSearchInput): Promise<OrderListRes
   const searchPattern = search ? `%${search}%` : null;
   const offset = params.page * params.pageSize;
 
-  // Correlated scalar subquery instead of `LEFT JOIN LATERAL` (Postgres-only
-  // syntax) — reused in both WHERE and SELECT, which plain SQL allows.
-  // `LOWER(x) LIKE LOWER(pattern)` replaces `ILIKE` (SQLite has no ILIKE).
-  // The `::order_status`/`::uuid` casts are gone: both columns are plain
-  // strings now (SQLite has no enum or uuid native type), so there is
-  // nothing to cast to.
+  // Correlated scalar subquery instead of `LEFT JOIN LATERAL` — reused in
+  // both WHERE and SELECT, which a plain subquery allows without a join
+  // alias. Both `status` and `customer_id` are plain string columns (no
+  // native enum, no native uuid type — see `src/lib/enums.ts`), so no
+  // `::type` cast is needed on the parameters.
   const paidAmountSql = Prisma.sql`(SELECT SUM(p.amount) FROM payments p WHERE p.order_id = o.id AND p.deleted_at IS NULL)`;
 
   const whereClause = Prisma.sql`
@@ -499,13 +498,13 @@ export async function listOrders(params: OrderSearchInput): Promise<OrderListRes
     ${
       searchPattern
         ? Prisma.sql`AND (
-            LOWER(o.order_number) LIKE LOWER(${searchPattern})
-            OR LOWER(c.name) LIKE LOWER(${searchPattern})
-            OR LOWER(c.customer_code) LIKE LOWER(${searchPattern})
+            o.order_number ILIKE ${searchPattern}
+            OR c.name ILIKE ${searchPattern}
+            OR c.customer_code ILIKE ${searchPattern}
             OR EXISTS (
               SELECT 1 FROM order_items oi
               WHERE oi.order_id = o.id
-                AND (LOWER(oi.product_name_snapshot) LIKE LOWER(${searchPattern}) OR LOWER(oi.product_code_snapshot) LIKE LOWER(${searchPattern}))
+                AND (oi.product_name_snapshot ILIKE ${searchPattern} OR oi.product_code_snapshot ILIKE ${searchPattern})
             )
           )`
         : Prisma.empty

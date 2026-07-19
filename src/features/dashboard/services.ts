@@ -42,9 +42,10 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     db.order.count({ where: { deletedAt: null, status: "preparing" } }),
     db.order.count({ where: { deletedAt: null, status: "ready" } }),
     db.order.count({ where: { deletedAt: null, status: "completed", updatedAt: { gte: todayStart } } }),
-    // Correlated scalar subquery instead of `LEFT JOIN LATERAL` (Postgres-
-    // only syntax, unsupported on SQLite) — a derived table wrapping the
-    // per-order paid amount so it can be filtered on in the outer WHERE.
+    // Correlated scalar subquery instead of `LEFT JOIN LATERAL` — a derived
+    // table wrapping the per-order paid amount so it can be filtered on in
+    // the outer WHERE, using plain ANSI SQL rather than a Postgres-specific
+    // join form.
     db.$queryRaw<[{ count: string | number | bigint; total: string | number | bigint }]>`
       SELECT COUNT(*) AS count, COALESCE(SUM(sub.total_amount - sub.paid), 0) AS total
       FROM (

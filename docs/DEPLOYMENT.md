@@ -1,71 +1,69 @@
 # Deployment Guide — SPCO Warehouse v1.0
 
-## Local development (SQLite — no server to install)
+PostgreSQL is the only supported database, in every environment — there is no bundled/embedded database and no SQLite fallback anywhere in this project. A real, reachable Postgres instance is required before `npm run dev`, `npm run db:setup`, or any other `db:*` script will do anything useful.
+
+## Local development
+
+Any Postgres 15+ instance works: a local install, Docker (`docker run -e POSTGRES_PASSWORD=... -p 5432:5432 postgres:16`), or a free-tier cloud Postgres (Neon, Supabase). Then:
 
 ```bash
 git clone <repository> && cd spco-warehouse
 npm install
-npm run db:setup    # generate client, create+migrate prisma/dev.db, seed roles + admin
+cp .env.example .env   # edit DATABASE_URL to your real Postgres connection string
+npm run db:setup       # generate client, apply migrations, seed roles + admin
 npm run dev
 ```
 
-Open `http://localhost:3000`, log in with `spcobaby` / `spcospco2026` (see `prisma/seed.ts`). `.env` ships with a working `DATABASE_URL="file:./prisma/dev.db"` — nothing to edit. To start over: delete `prisma/dev.db` and re-run `npm run db:setup`.
+Open `http://localhost:3000`, log in with `spcobaby` / `spcospco2026` (see `prisma/seed.ts`). To start over: drop and recreate the database, then re-run `npm run db:setup`.
 
-This is a genuinely separate, disposable database from production — see "Moving to production" below for how the two stay decoupled while sharing one schema and one codebase.
+## Production — Ubuntu 24.04, PostgreSQL, PM2, Nginx
 
-## Production (PostgreSQL on a VPS)
-
-Target: a single Linux VPS (Debian/Ubuntu assumed). The architecture also allows a future on-premise move — the steps are identical on any machine meeting the dependencies.
-
-### 1. System provisioning
+### 1. System packages
 
 ```bash
-# Node.js 20+ (via nodesource or nvm), then:
-apt update
-apt install -y postgresql ghostscript        # ghostscript provides `gxps` (XPS→PDF utility)
+sudo apt update && sudo apt upgrade -y
+
+# Node.js 20 LTS (Ubuntu 24.04's own repo Node is too old for Next.js 16)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# PostgreSQL (Ubuntu 24.04 ships PostgreSQL 16)
+sudo apt install -y postgresql postgresql-contrib
+
+# Ghostscript — provides `gxps` for the XPS→PDF utility
+sudo apt install -y ghostscript
+
+# Nginx (reverse proxy) + Certbot (TLS)
+sudo apt install -y nginx certbot python3-certbot-nginx
+
+# PM2 (process manager)
+sudo npm install -g pm2
 ```
 
-Create the database and user:
+### 2. Database
 
-```sql
-CREATE USER spco WITH PASSWORD '<strong-password>';
+```bash
+sudo -u postgres psql <<'SQL'
+CREATE USER spco WITH PASSWORD 'REPLACE_WITH_A_STRONG_PASSWORD';
 CREATE DATABASE spco_warehouse OWNER spco;
+SQL
 ```
 
-### 2. Application setup
+### 3. Application
 
 ```bash
+sudo mkdir -p /opt/spco-warehouse && sudo chown $USER:$USER /opt/spco-warehouse
 git clone <repository> /opt/spco-warehouse && cd /opt/spco-warehouse
 npm ci
 npx playwright install --with-deps chromium   # required for invoice PDF export
 ```
 
-### 3. Switch the schema from SQLite to Postgres
+### 4. Environment variables
 
-The schema is deliberately provider-agnostic (no Postgres-only native types, no Prisma `enum` blocks — see `src/lib/enums.ts`, no `LATERAL` joins in the raw SQL), specifically so this is the entire migration:
-
-1. Open `prisma/schema.prisma` and change:
-   ```prisma
-   datasource db {
-     provider = "sqlite"
-   }
-   ```
-   to:
-   ```prisma
-   datasource db {
-     provider = "postgresql"
-   }
-   ```
-2. Set `.env`'s `DATABASE_URL` to the Postgres connection string (below) — `src/lib/db.ts` and `prisma.config.ts` both pick the matching driver adapter automatically from the URL scheme (`file:` vs `postgresql://`), so no other file needs to change.
-3. Generate a fresh Postgres migration history — the committed `prisma/migrations/` directory holds SQLite-specific DDL that does not apply to Postgres:
-   ```bash
-   npx prisma migrate dev --name init
-   ```
-   (`prisma/migrations-postgresql-reference/` holds the original hand-authored Postgres migration set from before the SQLite conversion, kept only as a reference if you'd rather hand-author this one instead of regenerating it.)
-
-No application code — services, actions, components, the seed script — needs to change for this switch. That was the explicit design goal of removing every Postgres-only construct from the schema and raw queries.
-
-### Environment variables (`.env`)
+```bash
+cp .env.example .env
+nano .env
+```
 
 | Variable | Value |
 |---|---|
@@ -73,46 +71,59 @@ No application code — services, actions, components, the seed script — needs
 | `NEXTAUTH_SECRET` | Output of `openssl rand -base64 32` — unique per environment, never reused |
 | `NEXTAUTH_URL` | The public URL of the app, e.g. `https://anbar.example.ir` — also used by the PDF exporter to reach its own print page |
 
-### 4. Migrate and seed
+### 5. Migrate, seed, build
 
 ```bash
 npx prisma generate
 npx prisma migrate deploy    # applies prisma/migrations/* in order — never `migrate dev` in production
-npm run db:seed              # idempotent: 3 RBAC roles + initial admin `spcobaby`
+npm run db:seed              # idempotent: 3 RBAC roles + initial admin `spcobaby` / `spcospco2026`
+npm run build
 ```
 
-**Immediately after first login: change the `spcobaby` password** (حساب کاربری → تغییر رمز عبور). The seed password is in source control and must be treated as public.
+**Immediately after first login: change the `spcobaby` password** (حساب کاربری → تغییر رمز عبور). The seed password is in source control and must be treated as public. Then, as the admin, open **تنظیمات** and save the company name — pre-invoice generation is blocked until it exists.
 
-Then, as the admin, open **تنظیمات** and save the company name — pre-invoice generation is blocked until it exists.
-
-### 5. Build and run
+### 6. Run under PM2
 
 ```bash
-npm run build
-npm run start                # serves on port 3000
+pm2 start npm --name spco-warehouse -- start
+pm2 save
+pm2 startup systemd   # prints a command to run once as root — run it to survive reboots
 ```
 
-Run under a process manager (systemd example):
+Useful PM2 commands: `pm2 status`, `pm2 logs spco-warehouse`, `pm2 restart spco-warehouse`.
 
-```ini
-# /etc/systemd/system/spco-warehouse.service
-[Unit]
-Description=SPCO Warehouse
-After=network.target postgresql.service
+### 7. Nginx reverse proxy
 
-[Service]
-WorkingDirectory=/opt/spco-warehouse
-ExecStart=/usr/bin/npm run start
-Restart=always
-EnvironmentFile=/opt/spco-warehouse/.env
+```nginx
+# /etc/nginx/sites-available/spco-warehouse
+server {
+    listen 80;
+    server_name anbar.example.ir;
 
-[Install]
-WantedBy=multi-user.target
+    client_max_body_size 25M;  # matches the XPS→PDF and image upload limits
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;  # the auth audit log reads this
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
 ```
 
-Put Nginx/Caddy in front for TLS and set `X-Forwarded-For` (the auth audit log reads it). The `public/uploads/` directory holds product images, the company logo, and exported invoice PDFs — it must be writable by the service user and **included in backups**.
+```bash
+sudo ln -s /etc/nginx/sites-available/spco-warehouse /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d anbar.example.ir   # TLS
+```
 
-### 6. Backup
+The `public/uploads/` directory holds product images, the company logo, and exported invoice PDFs — it must be writable by the user PM2 runs as and **included in backups**.
+
+### 8. Backup
 
 Two things constitute the entire system state:
 
@@ -126,19 +137,19 @@ tar czf /backup/uploads_$(date +%F).tar.gz -C /opt/spco-warehouse/public uploads
 
 Keep at least 14 daily copies off the VPS. The invoice snapshot guarantee depends on upload files never being lost: DB rows reference them by immutable path.
 
-### 7. Restore
+### 9. Restore
 
 ```bash
-systemctl stop spco-warehouse
-dropdb -U spco spco_warehouse && createdb -U spco spco_warehouse
+pm2 stop spco-warehouse
+sudo -u postgres dropdb spco_warehouse && sudo -u postgres createdb -O spco spco_warehouse
 pg_restore -U spco -d spco_warehouse /backup/spco_<date>.dump
 tar xzf /backup/uploads_<date>.tar.gz -C /opt/spco-warehouse/public
-systemctl start spco-warehouse
+pm2 start spco-warehouse
 ```
 
 Restore DB and uploads **from the same date** — they reference each other.
 
-### 8. Upgrades
+### 10. Upgrades
 
 ```bash
 cd /opt/spco-warehouse
@@ -146,7 +157,7 @@ git pull
 npm ci
 npx prisma migrate deploy    # new migrations only; existing data preserved
 npm run build
-systemctl restart spco-warehouse
+pm2 restart spco-warehouse
 ```
 
-Take a backup (step 6) before every upgrade.
+Take a backup (step 8) before every upgrade.

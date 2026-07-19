@@ -2,20 +2,17 @@ generator client {
   provider = "prisma-client-js"
 }
 
-/// SQLite for local development (checked in so `npm run db:setup` works with
-/// zero manual configuration — no server to install or connect to).
-/// Deliberately provider-agnostic beyond this line: no Postgres-only native
-/// types (`@db.Uuid`/`@db.Timestamptz`/`@db.VarChar`), no Prisma `enum`
-/// blocks (SQLite has no enum type at all — every former enum below is now
-/// a plain `String`, validated by the matching union type + Zod schema in
-/// `src/lib/enums.ts`, not by the database). Moving to production Postgres
-/// is exactly the three steps documented in `docs/DEPLOYMENT.md`: flip this
-/// `provider` to `"postgresql"`, point `DATABASE_URL` at the Postgres
-/// instance, run migrations — `src/lib/db.ts` and `prisma.config.ts` already
-/// pick the matching driver adapter from the `DATABASE_URL` scheme, so no
-/// other file changes.
+/// PostgreSQL — the only supported database, in development and
+/// production alike (no SQLite anywhere in this project). No Postgres-only
+/// native types (`@db.Uuid`/`@db.Timestamptz`/`@db.VarChar`) and no Prisma
+/// `enum` blocks are used here even though this schema no longer needs to
+/// stay SQLite-portable — every former enum is a plain `String`, validated
+/// by the matching union type + Zod schema in `src/lib/enums.ts` — because
+/// that design has no downside on Postgres either and there's no reason to
+/// churn it back. See `docs/DEPLOYMENT.md` for the full Ubuntu/PostgreSQL
+/// setup.
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 // =========================================================

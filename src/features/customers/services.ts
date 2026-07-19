@@ -185,19 +185,17 @@ const SORT_COLUMN_SQL: Record<CustomerSearchInput["sortBy"], Prisma.Sql> = {
  * fetching every row and filtering client-side. `lastOrderDate` and
  * `outstandingBalance` are correlated per-customer aggregates that
  * Prisma's query builder cannot express in one round trip, so this is raw
- * SQL with correlated scalar subqueries (portable across SQLite and
- * Postgres, unlike Postgres-only `LATERAL` joins) — one query for the page
- * of rows, one lightweight `COUNT(*)` for total pages.
+ * SQL with correlated scalar subqueries — one query for the page of rows,
+ * one lightweight `COUNT(*)` for total pages.
  *
- * Search matches name/mobile/customerCode/city via `LOWER(x) LIKE LOWER(pattern)`
- * (portable across SQLite/Postgres, unlike Postgres's `ILIKE`), which is a
+ * Search matches name/mobile/customerCode/city via `ILIKE`, which is a
  * sequential scan for the leading-wildcard name case at very large table
  * sizes. `mobile`/`customer_code` are effectively exact/prefix lookups
  * covered well by their existing B-tree indexes; genuinely fast fuzzy
- * Persian name search at huge scale needs a `pg_trgm` GIN index on
- * Postgres — a real, flagged follow-up (adding a Postgres extension is an
- * infra decision, not something to do silently in an application-layer
- * migration), not implemented here.
+ * Persian name search at huge scale needs a `pg_trgm` GIN index — a real,
+ * flagged follow-up (adding a Postgres extension is an infra decision, not
+ * something to do silently in an application-layer migration), not
+ * implemented here.
  */
 /**
  * Raw-row shape as it actually comes back over `$queryRaw` — `node-postgres`
@@ -221,14 +219,11 @@ export async function listCustomers(params: CustomerSearchInput): Promise<Custom
   const orderDirection = params.sortDirection === "asc" ? Prisma.sql`ASC` : Prisma.sql`DESC`;
   const offset = params.page * params.pageSize;
 
-  // Correlated scalar subqueries instead of `LEFT JOIN LATERAL` — LATERAL
-  // is Postgres-only syntax SQLite doesn't support at all, while a plain
-  // subquery-per-column is standard SQL that both engines execute
-  // identically. `LOWER(x) LIKE LOWER(pattern)` replaces Postgres's `ILIKE`
-  // for the same reason (SQLite has no ILIKE operator). The former
-  // `::customer_status` cast is gone too: `status` is a plain string
-  // column now (SQLite has no enum type — see `src/lib/enums.ts`), so the
-  // cast target no longer exists.
+  // Correlated scalar subqueries instead of `LEFT JOIN LATERAL` — both are
+  // valid Postgres query forms; a subquery-per-column reads slightly more
+  // plainly here and needs no join alias bookkeeping. `status` is a plain
+  // string column (no native enum — see `src/lib/enums.ts`), so no `::type`
+  // cast is needed on the parameter.
   const lastOrderDateSql = Prisma.sql`(SELECT MAX(o.created_at) FROM orders o WHERE o.customer_id = c.id AND o.deleted_at IS NULL)`;
   const totalAmountSql = Prisma.sql`(SELECT SUM(o.total_amount) FROM orders o WHERE o.customer_id = c.id AND o.deleted_at IS NULL AND o.status != 'cancelled')`;
   const paidAmountSql = Prisma.sql`(SELECT SUM(p.amount) FROM payments p JOIN orders o2 ON o2.id = p.order_id WHERE o2.customer_id = c.id AND p.deleted_at IS NULL AND o2.deleted_at IS NULL AND o2.status != 'cancelled')`;
@@ -237,12 +232,7 @@ export async function listCustomers(params: CustomerSearchInput): Promise<Custom
     c.deleted_at IS NULL
     ${
       searchPattern
-        ? Prisma.sql`AND (
-            LOWER(c.name) LIKE LOWER(${searchPattern})
-            OR LOWER(c.mobile) LIKE LOWER(${searchPattern})
-            OR LOWER(c.customer_code) LIKE LOWER(${searchPattern})
-            OR LOWER(c.city) LIKE LOWER(${searchPattern})
-          )`
+        ? Prisma.sql`AND (c.name ILIKE ${searchPattern} OR c.mobile ILIKE ${searchPattern} OR c.customer_code ILIKE ${searchPattern} OR c.city ILIKE ${searchPattern})`
         : Prisma.empty
     }
     ${params.status ? Prisma.sql`AND c.status = ${params.status}` : Prisma.empty}
@@ -382,16 +372,10 @@ export async function searchCustomersForPicker(query: string): Promise<CustomerP
       status: "active",
       ...(trimmed
         ? {
-            // No `mode: "insensitive"` — that Prisma filter option is
-            // Postgres/MongoDB-only and errors on SQLite. SQLite's default
-            // `LIKE`/`contains` is already case-insensitive for ASCII, and
-            // Persian script has no case distinction at all, so behavior
-            // is unaffected for this app's actual data (Persian names,
-            // Latin customer codes).
             OR: [
-              { name: { contains: trimmed } },
+              { name: { contains: trimmed, mode: "insensitive" } },
               { mobile: { contains: trimmed } },
-              { customerCode: { contains: trimmed } },
+              { customerCode: { contains: trimmed, mode: "insensitive" } },
             ],
           }
         : {}),

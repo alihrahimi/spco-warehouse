@@ -37,15 +37,16 @@ export async function globalSearchAction(query: string): Promise<GlobalSearchRes
   const canViewOrders = hasPermission(role, "orders:view");
   const canViewPayments = hasPermission(role, "payments:view");
 
-  // No `mode: "insensitive"` anywhere below — Postgres/MongoDB-only, errors
-  // on SQLite. SQLite's default LIKE is already case-insensitive for ASCII,
-  // and Persian script has no case distinction, so behavior is unaffected.
   const [customers, products, orders, payments] = await Promise.all([
     canViewCustomers
       ? db.customer.findMany({
           where: {
             deletedAt: null,
-            OR: [{ name: { contains: trimmed } }, { mobile: { contains: trimmed } }, { customerCode: { contains: trimmed } }],
+            OR: [
+              { name: { contains: trimmed, mode: "insensitive" } },
+              { mobile: { contains: trimmed } },
+              { customerCode: { contains: trimmed, mode: "insensitive" } },
+            ],
           },
           take: 5,
           select: { id: true, name: true, customerCode: true, mobile: true },
@@ -55,7 +56,7 @@ export async function globalSearchAction(query: string): Promise<GlobalSearchRes
       ? db.product.findMany({
           where: {
             deletedAt: null,
-            OR: [{ name: { contains: trimmed } }, { productCode: { contains: trimmed } }],
+            OR: [{ name: { contains: trimmed, mode: "insensitive" } }, { productCode: { contains: trimmed, mode: "insensitive" } }],
           },
           take: 5,
           select: { id: true, name: true, productCode: true },
@@ -65,7 +66,10 @@ export async function globalSearchAction(query: string): Promise<GlobalSearchRes
       ? db.order.findMany({
           where: {
             deletedAt: null,
-            OR: [{ orderNumber: { contains: trimmed } }, { customer: { name: { contains: trimmed } } }],
+            OR: [
+              { orderNumber: { contains: trimmed, mode: "insensitive" } },
+              { customer: { name: { contains: trimmed, mode: "insensitive" } } },
+            ],
           },
           orderBy: { createdAt: "desc" },
           take: 5,
@@ -74,7 +78,7 @@ export async function globalSearchAction(query: string): Promise<GlobalSearchRes
       : [],
     canViewPayments
       ? db.payment.findMany({
-          where: { deletedAt: null, chequeNumber: { contains: trimmed } },
+          where: { deletedAt: null, chequeNumber: { contains: trimmed, mode: "insensitive" } },
           orderBy: { paidAt: "desc" },
           take: 5,
           select: { id: true, orderId: true, chequeNumber: true, amount: true, order: { select: { orderNumber: true } } },

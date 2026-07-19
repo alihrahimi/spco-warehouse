@@ -45,8 +45,8 @@ export default async function EditCustomerPage({ params }: EditCustomerPageProps
               // Cast is safe: this column is only ever written through
               // `customerSchema`'s `z.enum(PAYMENT_METHODS)`, so every row
               // already holds a valid `PaymentMethod` value — the DB
-              // column itself is a plain `string` now that SQLite has no
-              // enum type (see `src/lib/enums.ts`).
+              // column itself is a plain `string` (no native enum — see
+              // `src/lib/enums.ts`).
               defaultPaymentType: customer.defaultPaymentType as PaymentMethod,
               phone: customer.phone ?? "",
               province: customer.province ?? "",

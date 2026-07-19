@@ -222,12 +222,9 @@ export async function listProducts(params: ProductSearchInput): Promise<ProductL
 
   const where: Prisma.ProductWhereInput = {
     deletedAt: null,
-    // No `mode: "insensitive"` — Postgres/MongoDB-only, errors on SQLite.
-    // SQLite's default LIKE is already case-insensitive for ASCII, and
-    // Persian script has no case distinction, so behavior is unaffected.
     ...(search
       ? {
-          OR: [{ name: { contains: search } }, { productCode: { contains: search } }],
+          OR: [{ name: { contains: search, mode: "insensitive" } }, { productCode: { contains: search, mode: "insensitive" } }],
         }
       : {}),
     ...(params.isActive !== undefined ? { isActive: params.isActive } : {}),
@@ -728,7 +725,9 @@ export async function searchProductsForOrder(query: string): Promise<
     where: {
       deletedAt: null,
       isActive: true,
-      ...(trimmed ? { OR: [{ name: { contains: trimmed } }, { productCode: { contains: trimmed } }] } : {}),
+      ...(trimmed
+        ? { OR: [{ name: { contains: trimmed, mode: "insensitive" } }, { productCode: { contains: trimmed, mode: "insensitive" } }] }
+        : {}),
     },
     orderBy: [{ isFavorite: "desc" }, { updatedAt: "desc" }],
     take: 24,
