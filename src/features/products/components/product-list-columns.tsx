@@ -35,7 +35,9 @@ export function getProductListColumns(onToggleFavorite: (productId: string, next
       cell: ({ row }) => (
         <div className="relative size-12 overflow-hidden rounded-medium bg-disabled">
           {row.original.imageFilePath ? (
-            <Image src={row.original.imageFilePath} alt={row.original.name} fill sizes="48px" className="object-cover" />
+            // unoptimized: /uploads/* is auth-protected, which breaks the
+            // cookie-less /_next/image optimizer fetch — see invoice-view.tsx.
+            <Image src={row.original.imageFilePath} alt={row.original.name} fill sizes="48px" unoptimized className="object-cover" />
           ) : (
             <div className="flex size-full items-center justify-center">
               <PackageSearch className="size-5 text-muted-foreground" />

@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, Printer } from "lucide-react";
+import { Download, Images, Printer } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { recordInvoicePrintedAction } from "@/features/orders/actions";
@@ -19,7 +19,13 @@ export function PrintToolbar({ orderId }: { orderId: string }) {
   }
 
   return (
-    <div className="mx-auto flex max-w-[210mm] items-center justify-end gap-3 p-4 print:hidden">
+    <div className="mx-auto flex max-w-[210mm] flex-wrap items-center justify-end gap-3 p-4 print:hidden">
+      <Button asChild variant="outline">
+        <a href={`/api/orders/${orderId}/invoice/images`} download>
+          <Images className="size-4" />
+          دانلود تصاویر
+        </a>
+      </Button>
       <Button asChild variant="outline">
         <a href={`/api/orders/${orderId}/invoice`} download>
           <Download className="size-4" />

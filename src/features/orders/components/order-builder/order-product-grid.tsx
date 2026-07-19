@@ -119,12 +119,21 @@ function ProductRow({
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center gap-3 px-3 py-2.5 text-start"
+        // When expanded, the header sticks to the top of the viewport while
+        // its (possibly very long) piece/size list scrolls beneath it — the
+        // user always sees which product they're typing into and can
+        // collapse it with one tap, without scrolling back up first.
+        className={cn(
+          "flex w-full items-center gap-3 px-3 py-2.5 text-start",
+          expanded && "sticky top-0 z-10 rounded-t-large border-b border-divider bg-surface",
+        )}
         aria-expanded={expanded}
       >
-        <div className="relative size-11 shrink-0 overflow-hidden rounded-medium bg-disabled">
+        <div className="relative size-11 shrink-0 overflow-hidden rounded-full border border-border bg-disabled">
           {imageFilePath ? (
-            <Image src={imageFilePath} alt="" fill sizes="44px" className="object-cover" />
+            // unoptimized: /uploads/* is auth-protected, which breaks the
+            // cookie-less /_next/image optimizer fetch — see invoice-view.tsx.
+            <Image src={imageFilePath} alt="" fill sizes="44px" unoptimized className="object-cover" />
           ) : (
             <div className="flex size-full items-center justify-center">
               <PackageSearch className="size-5 text-muted-foreground" aria-hidden="true" />
@@ -211,7 +220,10 @@ function ProductRowDetail({ productId }: { productId: string }) {
               return (
                 <div
                   key={size.productPieceSizeId}
-                  className="grid grid-cols-[auto_1fr_1fr] items-end gap-2 px-3 py-2 sm:grid-cols-[auto_6rem_6rem_1fr]"
+                  // 8rem (not 6rem) fixed columns at sm+: each NumberInput
+                  // carries two 3rem steppers, so 6rem left literally zero
+                  // width for typing into the field between them.
+                  className="grid grid-cols-[auto_1fr_1fr] items-end gap-2 px-3 py-2 sm:grid-cols-[auto_8rem_8rem_1fr]"
                 >
                   <div className="w-14">
                     <p className="text-body font-medium text-foreground">سایز {toPersianDigits(size.sizeLabel)}</p>

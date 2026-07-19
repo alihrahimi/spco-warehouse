@@ -120,7 +120,9 @@ export function CompanySettingsForm({ initial }: { initial: CompanySettingsView 
           <p className="mb-2 text-body font-medium text-foreground">لوگو</p>
           <div className="flex items-center gap-4">
             <div className="relative flex size-24 items-center justify-center overflow-hidden rounded-large border border-border bg-disabled">
-              {logo ? <Image src={logo} alt="لوگوی شرکت" fill sizes="96px" className="object-contain" /> : <span className="text-caption text-muted-foreground">بدون لوگو</span>}
+              {/* unoptimized: /uploads/* is auth-protected, which breaks the
+                  cookie-less /_next/image optimizer fetch — see invoice-view.tsx. */}
+              {logo ? <Image src={logo} alt="لوگوی شرکت" fill sizes="96px" unoptimized className="object-contain" /> : <span className="text-caption text-muted-foreground">بدون لوگو</span>}
             </div>
             <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleLogoSelected} />
             <Button type="button" variant="outline" size="compact" loading={isUploadingLogo} onClick={() => fileInputRef.current?.click()}>

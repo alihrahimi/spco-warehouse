@@ -199,31 +199,43 @@ export function OrderBuilder({
       </Card>
 
       {customer ? (
-        <>
+        // Mobile/tablet: the same vertical stack as always. Desktop (xl+):
+        // products on one side, the running review + notes on the other,
+        // with the side column sticky and internally scrollable — the
+        // waiter-on-a-tablet flow gains a cashier-screen layout on large
+        // monitors where the order being built is always in view, without
+        // any workflow change.
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_26rem] xl:items-start">
           <Card>
             <h2 className="mb-3 text-h4 font-semibold text-foreground">محصولات — برای نمایش قطعه‌ها و سایزها لمس کنید</h2>
             <OrderProductGrid expandedProductId={expandedProductId} onExpandedChange={setExpandedProductId} />
           </Card>
 
-          <Card>
-            <h2 className="mb-3 text-h4 font-semibold text-foreground">اقلام سفارش</h2>
-            <OrderLinesReview onEditProduct={(productId) => setExpandedProductId(productId)} />
-          </Card>
+          <div className="flex min-w-0 flex-col gap-6 xl:sticky xl:top-6 xl:max-h-[calc(100dvh-10rem)] xl:overflow-y-auto">
+            <Card>
+              <h2 className="mb-3 text-h4 font-semibold text-foreground">اقلام سفارش</h2>
+              <OrderLinesReview onEditProduct={(productId) => setExpandedProductId(productId)} />
+            </Card>
 
-          <Card className="grid gap-4 sm:grid-cols-2">
-            <FormField label="یادداشت داخلی (فقط برای کارکنان)" htmlFor="notes">
-              <Textarea id="notes" value={notes} onChange={(event) => store.setNotes(event.target.value)} />
-            </FormField>
-            <FormField label="یادداشت مشتری (روی پیش‌فاکتور چاپ می‌شود)" htmlFor="customerNotes">
-              <Textarea id="customerNotes" value={customerNotes} onChange={(event) => store.setCustomerNotes(event.target.value)} />
-            </FormField>
-            {mode === "versioned_edit" ? (
-              <FormField label="دلیل تغییر (اختیاری — در تاریخچه نسخه‌ها ثبت می‌شود)" htmlFor="changeReason" className="sm:col-span-2">
-                <Textarea id="changeReason" value={changeReason} onChange={(event) => setChangeReason(event.target.value)} />
+            <Card className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+              <FormField label="یادداشت داخلی (فقط برای کارکنان)" htmlFor="notes">
+                <Textarea id="notes" value={notes} onChange={(event) => store.setNotes(event.target.value)} />
               </FormField>
-            ) : null}
-          </Card>
-        </>
+              <FormField label="یادداشت مشتری (روی پیش‌فاکتور چاپ می‌شود)" htmlFor="customerNotes">
+                <Textarea id="customerNotes" value={customerNotes} onChange={(event) => store.setCustomerNotes(event.target.value)} />
+              </FormField>
+              {mode === "versioned_edit" ? (
+                <FormField
+                  label="دلیل تغییر (اختیاری — در تاریخچه نسخه‌ها ثبت می‌شود)"
+                  htmlFor="changeReason"
+                  className="sm:col-span-2 xl:col-span-1"
+                >
+                  <Textarea id="changeReason" value={changeReason} onChange={(event) => setChangeReason(event.target.value)} />
+                </FormField>
+              ) : null}
+            </Card>
+          </div>
+        </div>
       ) : null}
 
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface px-6 py-3 shadow-[var(--shadow-elevation-3)]">

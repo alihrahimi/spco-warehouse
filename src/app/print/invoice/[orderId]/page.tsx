@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { requirePermission } from "@/lib/auth/session";
 import { getInvoiceRenderData } from "@/features/invoices/services";
+import { InvoiceScaler } from "@/features/invoices/components/invoice-scaler";
 import { InvoiceView } from "@/features/invoices/components/invoice-view";
 import { PrintToolbar } from "@/features/invoices/components/print-toolbar";
 
@@ -40,9 +41,13 @@ export default async function InvoicePrintPage({ params }: InvoicePrintPageProps
         @page { size: A4; margin: 15mm; }
         @media print {
           .invoice-page { width: auto; min-height: auto; padding: 0; box-shadow: none; }
+          /* !important so the reset beats the scaler's inline on-screen zoom. */
+          .invoice-scaler { zoom: 1 !important; }
         }
       `}</style>
-      <InvoiceView data={result.data} />
+      <InvoiceScaler>
+        <InvoiceView data={result.data} />
+      </InvoiceScaler>
     </div>
   );
 }

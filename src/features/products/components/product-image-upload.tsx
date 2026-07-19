@@ -56,7 +56,9 @@ export function ProductImageUpload({ productId, imageFilePath }: { productId: st
     <div className="flex flex-col gap-3">
       <div className="relative flex size-40 items-center justify-center overflow-hidden rounded-large border border-border bg-disabled">
         {currentImage ? (
-          <Image src={currentImage} alt="تصویر محصول" fill sizes="160px" className="object-cover" />
+          // unoptimized: /uploads/* is auth-protected, which breaks the
+          // cookie-less /_next/image optimizer fetch — see invoice-view.tsx.
+          <Image src={currentImage} alt="تصویر محصول" fill sizes="160px" unoptimized className="object-cover" />
         ) : (
           <PackageSearch className="size-10 text-muted-foreground" aria-hidden="true" />
         )}

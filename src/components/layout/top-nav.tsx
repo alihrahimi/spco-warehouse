@@ -64,7 +64,7 @@ export function TopNav({ title, onBack, breadcrumb, actions, titleHref, logoSrc 
         // title group; overflow-x-auto gives it its own scroll region so a too-wide
         // row of nav items scrolls *here* instead of forcing the whole header (and
         // therefore the document) wider than the viewport.
-        <div className="flex min-w-0 flex-1 items-center justify-end gap-3 overflow-x-auto">
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-3 overflow-x-auto *:shrink-0">
           {actions}
         </div>
       ) : null}

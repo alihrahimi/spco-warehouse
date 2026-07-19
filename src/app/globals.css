@@ -168,8 +168,13 @@ body {
    * which is the bug this rule exists to make structurally impossible.
    * The elements that legitimately need horizontal scroll (TopNav's
    * actions row) get their own `overflow-x-auto` region instead.
+   *
+   * `clip`, NOT `hidden`: `overflow-x: hidden` forces the other axis to
+   * `auto`, quietly turning <body> into its own scroll container — window
+   * scrolling (window.scrollY, sticky-to-viewport math) breaks. `clip`
+   * just clips, with no scroll container created.
    */
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 body {

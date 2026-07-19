@@ -166,7 +166,10 @@ export const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(functi
         type="button"
         onClick={() => handleStep(-1)}
         aria-label="کاهش"
-        className="w-12 shrink-0 border-e border-border text-h3 text-foreground-secondary hover:bg-hover disabled:text-disabled-foreground"
+        // w-9 below sm: at 48px each, the two steppers alone consumed the
+        // narrow quantity columns of the order grid, leaving the input
+        // itself 0px wide — typing a number was impossible on phones.
+        className="w-9 shrink-0 border-e border-border text-h3 text-foreground-secondary hover:bg-hover disabled:text-disabled-foreground sm:w-12"
         disabled={props.disabled || (min !== undefined && value !== "" && value <= min)}
       >
         −
@@ -181,14 +184,17 @@ export const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(functi
           const raw = event.target.value.replace(/[^0-9-]/g, "");
           onChange(raw === "" ? "" : clamp(Number.parseInt(raw, 10)));
         }}
-        className="w-full min-w-0 flex-1 bg-transparent text-center text-body-large text-foreground focus-visible:outline-none"
+        // min-w-9: guarantees a typeable field even inside a grid's 1fr
+        // column (1fr can shrink to the content minimum, and without a
+        // minimum the flexible input is the first thing squeezed to zero).
+        className="w-full min-w-9 flex-1 bg-transparent text-center text-body-large text-foreground focus-visible:outline-none"
         {...props}
       />
       <button
         type="button"
         onClick={() => handleStep(1)}
         aria-label="افزایش"
-        className="w-12 shrink-0 border-s border-border text-h3 text-foreground-secondary hover:bg-hover disabled:text-disabled-foreground"
+        className="w-9 shrink-0 border-s border-border text-h3 text-foreground-secondary hover:bg-hover disabled:text-disabled-foreground sm:w-12"
         disabled={props.disabled || (max !== undefined && value !== "" && value >= max)}
       >
         +

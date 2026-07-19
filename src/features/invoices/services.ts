@@ -70,6 +70,18 @@ export async function getInvoiceRenderData(orderId: string): Promise<ServiceResu
     ? (snapshot.phoneNumbersSnapshot as { phoneNumber: string; label: string | null }[])
     : [];
 
+  // Logo: snapshot first, like every other company field. But an invoice
+  // generated before any logo was ever uploaded has a null snapshot forever,
+  // and "the company logo must appear on the invoice" was an explicit
+  // requirement — so for that one case (and only that case) fall back to
+  // the CURRENT logo. Branding may backfill; names, prices, and contact
+  // snapshots never do.
+  let logoFilePath = snapshot.companyLogoSnapshot;
+  if (!logoFilePath) {
+    const liveSettings = await db.companySettings.findFirst({ select: { logoFilePath: true } });
+    logoFilePath = liveSettings?.logoFilePath ?? null;
+  }
+
   return {
     success: true,
     data: {
@@ -78,7 +90,7 @@ export async function getInvoiceRenderData(orderId: string): Promise<ServiceResu
       generatedAt: snapshot.generatedAt,
       company: {
         name: snapshot.companyNameSnapshot,
-        logoFilePath: snapshot.companyLogoSnapshot,
+        logoFilePath,
         phoneNumbers,
         whatsapp: snapshot.whatsappSnapshot,
         telegram: snapshot.telegramSnapshot,
@@ -113,6 +125,16 @@ export async function getInvoiceRenderData(orderId: string): Promise<ServiceResu
 
 export async function recordInvoicePrinted(orderId: string, userId: string): Promise<void> {
   await logAuditEvent({ entityType: AUDIT_ENTITY_TYPE, entityId: orderId, action: "invoice_printed", performedById: userId });
+}
+
+export async function recordImagesExported(orderId: string, userId: string, pageCount: number): Promise<void> {
+  await logAuditEvent({
+    entityType: AUDIT_ENTITY_TYPE,
+    entityId: orderId,
+    action: "invoice_images_exported",
+    performedById: userId,
+    changes: { pageCount },
+  });
 }
 
 export async function recordPdfExported(orderId: string, userId: string, pdfFilePath: string): Promise<void> {
