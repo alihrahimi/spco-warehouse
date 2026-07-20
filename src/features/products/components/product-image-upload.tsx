@@ -9,7 +9,16 @@ import { toast } from "@/components/ui/toast";
 import { useConfirmDialog } from "@/providers/confirm-dialog-provider";
 import { deleteProductImageAction, uploadProductImageAction } from "@/features/products/actions";
 
-export function ProductImageUpload({ productId, imageFilePath }: { productId: string; imageFilePath: string | null }) {
+export function ProductImageUpload({
+  productId,
+  imageFilePath,
+  canEdit = true,
+}: {
+  productId: string;
+  imageFilePath: string | null;
+  /** View-only roles (`products:view` without `products:edit`, e.g. Warehouse Staff) still see the photo — just not the upload/delete controls. */
+  canEdit?: boolean;
+}) {
   const [currentImage, setCurrentImage] = useState(imageFilePath);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -64,26 +73,30 @@ export function ProductImageUpload({ productId, imageFilePath }: { productId: st
         )}
       </div>
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        className="hidden"
-        onChange={handleFileSelected}
-      />
+      {canEdit ? (
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="hidden"
+            onChange={handleFileSelected}
+          />
 
-      <div className="flex gap-2">
-        <Button type="button" variant="outline" size="compact" loading={isUploading} onClick={() => fileInputRef.current?.click()}>
-          <Upload className="size-4" />
-          {currentImage ? "تغییر تصویر" : "افزودن تصویر"}
-        </Button>
-        {currentImage ? (
-          <Button type="button" variant="ghost" size="compact" onClick={handleDelete}>
-            <Trash2 className="size-4" />
-            حذف
-          </Button>
-        ) : null}
-      </div>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" size="compact" loading={isUploading} onClick={() => fileInputRef.current?.click()}>
+              <Upload className="size-4" />
+              {currentImage ? "تغییر تصویر" : "افزودن تصویر"}
+            </Button>
+            {currentImage ? (
+              <Button type="button" variant="ghost" size="compact" onClick={handleDelete}>
+                <Trash2 className="size-4" />
+                حذف
+              </Button>
+            ) : null}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

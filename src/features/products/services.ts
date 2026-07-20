@@ -279,6 +279,55 @@ export async function getProductDetails(productId: string) {
   });
 }
 
+export interface PieceWithSizes {
+  id: string;
+  name: string;
+  sortOrder: number;
+  sizes: {
+    sizeId: string;
+    sizeLabel: string;
+    productPieceSizeId: string | null;
+    unitPrice: number | null;
+    defaultPackSize: number | null;
+    accountingCode: string | null;
+  }[];
+}
+
+/**
+ * Cross-joins a product's pieces against every size in the system, so
+ * every Piece × Size combination gets a row whether or not it's been
+ * priced yet (SCREEN-SPECS.md §9 — "every combination, whether configured
+ * or not", so the pricing screen can flag "قیمتی تعریف نشده" instead of
+ * silently omitting unconfigured sizes). Shared by the Product Details
+ * pricing screen and Accounting Helper's product grid — both need the
+ * identical shape, so this used to be duplicated between them.
+ */
+export function buildPieceSizeGrid(
+  pieces: NonNullable<Awaited<ReturnType<typeof getProductDetails>>>["pieces"],
+  allSizes: Awaited<ReturnType<typeof getAllSizes>>,
+): PieceWithSizes[] {
+  return pieces.map((piece) => {
+    const configuredBySize = new Map(piece.sizes.map((entry) => [entry.sizeId, entry]));
+
+    return {
+      id: piece.id,
+      name: piece.name,
+      sortOrder: piece.sortOrder,
+      sizes: allSizes.map((size) => {
+        const configured = configuredBySize.get(size.id);
+        return {
+          sizeId: size.id,
+          sizeLabel: size.label,
+          productPieceSizeId: configured?.id ?? null,
+          unitPrice: configured ? Number(configured.unitPrice) : null,
+          defaultPackSize: configured?.defaultPackSize ?? null,
+          accountingCode: configured?.accountingCode ?? null,
+        };
+      }),
+    };
+  });
+}
+
 export async function getProductBasicById(productId: string): Promise<Product | null> {
   return db.product.findUnique({ where: { id: productId, deletedAt: null } });
 }
@@ -795,55 +844,27 @@ export interface ProductForAccounting {
   id: string;
   productCode: string;
   name: string;
-  pieces: {
-    id: string;
-    name: string;
-    sizes: {
-      productPieceSizeId: string;
-      sizeLabel: string;
-      accountingCode: string | null;
-    }[];
-  }[];
+  imageFilePath: string | null;
+  pieces: PieceWithSizes[];
 }
 
 /**
- * Every priced piece+size variant for one product, regardless of active
- * status — only sizes with an actual `ProductPieceSize` row are included
- * (an unpriced size has no row to carry an accounting code on).
+ * The same piece×size grid as the Product Details pricing screen (via
+ * `buildPieceSizeGrid`) — including unpriced/uncoded sizes, so Accounting
+ * Helper can fill in a missing price or code inline instead of sending the
+ * admin to the Products page first. Regardless of active status: this
+ * exists to help enter OFFICIAL PAPER INVOICES, which may reference a
+ * product/piece after it was deactivated.
  */
 export async function getProductForAccounting(productId: string): Promise<ProductForAccounting | null> {
-  const product = await db.product.findUnique({
-    where: { id: productId, deletedAt: null },
-    include: {
-      pieces: {
-        where: { deletedAt: null },
-        orderBy: { sortOrder: "asc" },
-        include: {
-          sizes: {
-            where: { deletedAt: null },
-            include: { size: true },
-            orderBy: { size: { sortOrder: "asc" } },
-          },
-        },
-      },
-    },
-  });
+  const [product, allSizes] = await Promise.all([getProductDetails(productId), getAllSizes()]);
   if (!product) return null;
 
   return {
     id: product.id,
     productCode: product.productCode,
     name: product.name,
-    pieces: product.pieces
-      .filter((piece) => piece.sizes.length > 0)
-      .map((piece) => ({
-        id: piece.id,
-        name: piece.name,
-        sizes: piece.sizes.map((entry) => ({
-          productPieceSizeId: entry.id,
-          sizeLabel: entry.size.label,
-          accountingCode: entry.accountingCode,
-        })),
-      })),
+    imageFilePath: product.imageFilePath,
+    pieces: buildPieceSizeGrid(product.pieces, allSizes),
   };
 }

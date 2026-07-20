@@ -11,7 +11,11 @@ import { toPersianDigits } from "@/lib/format/persian-digits";
 import { cn } from "@/lib/utils";
 import type { ProductListRow } from "@/features/products/services";
 
-export function getProductListColumns(onToggleFavorite: (productId: string, next: boolean) => void): ColumnDef<ProductListRow>[] {
+/** `canEdit` (`products:edit`): favoriting is itself an edit action server-side (`toggleFavoriteProductAction` requires it) — Warehouse Staff, who hold only `products:view`, still see the star but it's inert rather than triggering an action that would just throw `PERMISSION_DENIED` server-side. */
+export function getProductListColumns(
+  onToggleFavorite: (productId: string, next: boolean) => void,
+  canEdit: boolean,
+): ColumnDef<ProductListRow>[] {
   return [
     {
       id: "favorite",
@@ -20,9 +24,10 @@ export function getProductListColumns(onToggleFavorite: (productId: string, next
       cell: ({ row }) => (
         <button
           type="button"
+          disabled={!canEdit}
           aria-label={row.original.isFavorite ? "حذف از موردعلاقه‌ها" : "افزودن به موردعلاقه‌ها"}
           onClick={() => onToggleFavorite(row.original.id, !row.original.isFavorite)}
-          className="flex size-8 items-center justify-center rounded-small hover:bg-hover"
+          className="flex size-8 items-center justify-center rounded-small hover:bg-hover disabled:pointer-events-none"
         >
           <Star className={cn("size-4", row.original.isFavorite ? "fill-warning text-warning" : "text-muted-foreground")} />
         </button>

@@ -53,7 +53,20 @@ export function OrderProductGrid({
 
   return (
     <div className="flex flex-col gap-4">
-      <SearchInput value={search} onChange={(event) => setSearch(event.target.value)} placeholder="جستجوی طرح یا کد محصول..." />
+      {/*
+       * Sticky search toolbar. `-mx-4` cancels the parent Card's own
+       * horizontal `p-4` so this strip spans the card's full width while
+       * stuck (there's a heading above it inside the same Card, so a
+       * matching `-mt-4` would overlap that heading instead of reaching
+       * the card's actual top edge — horizontal-only cancellation is the
+       * correct trick here). Height (py-3 + 52px input = 76px) is what
+       * `top-[76px]` on each expanded product row's own sticky header
+       * below is measured against, so the two sticky layers stack instead
+       * of both pinning to the same spot.
+       */}
+      <div className="sticky top-0 z-20 -mx-4 bg-surface px-4 py-3 shadow-[var(--shadow-elevation-2)]">
+        <SearchInput value={search} onChange={(event) => setSearch(event.target.value)} placeholder="جستجوی طرح یا کد محصول..." />
+      </div>
 
       {isLoading ? (
         <div className="flex flex-col gap-2">
@@ -125,7 +138,9 @@ function ProductRow({
         // collapse it with one tap, without scrolling back up first.
         className={cn(
           "flex w-full items-center gap-3 px-3 py-2.5 text-start",
-          expanded && "sticky top-0 z-10 rounded-t-large border-b border-divider bg-surface",
+          // top-[76px] (not top-0): stacks right below the sticky search
+          // toolbar above instead of both pinning to the same spot.
+          expanded && "sticky top-[76px] z-10 rounded-t-large border-b border-divider bg-surface",
         )}
         aria-expanded={expanded}
       >

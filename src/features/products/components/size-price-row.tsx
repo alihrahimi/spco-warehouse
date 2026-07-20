@@ -24,12 +24,24 @@ export function SizePriceRow({
   productId,
   data,
   fallbackPackSize = 6,
+  canEdit = true,
 }: {
   pieceId: string;
   productId: string;
   data: SizePriceRowData;
   /** Unpriced sizes start from the admin-configurable system default (Phase 14) instead of a hardcoded 6. */
   fallbackPackSize?: number;
+  /**
+   * `products:edit` — without it, every save action below throws
+   * `PERMISSION_DENIED` server-side (correctly; the data is never at risk),
+   * but the field itself had no way to know that: `setIsSaving`/
+   * `setIsSavingCode` never reset because the thrown error skips the line
+   * right after `await`, so the input got stuck showing "در حال ذخیره..."
+   * forever for a view-only viewer. Disabling the fields for those viewers
+   * is the actual fix — not a try/catch band-aid around a save that was
+   * never going to succeed.
+   */
+  canEdit?: boolean;
 }) {
   const [price, setPrice] = useState<number | "">(data.unitPrice ?? "");
   const [packSize, setPackSize] = useState<number | "">(data.defaultPackSize ?? fallbackPackSize);
@@ -85,7 +97,7 @@ export function SizePriceRow({
       onKeyDown={(event) => {
         if (event.key === "Enter") event.currentTarget.blur();
       }}
-      disabled={!hasValue}
+      disabled={!hasValue || !canEdit}
       placeholder={hasValue ? "مثال: 1605" : "ابتدا قیمت را ثبت کنید"}
       dir="ltr"
       className="h-[52px] text-center"
@@ -110,6 +122,7 @@ export function SizePriceRow({
           onBlur={handleBlurSave}
           min={1}
           step={1000}
+          disabled={!canEdit}
         />
         <NumberInput
           aria-label={`سایز بسته سایز ${data.sizeLabel}`}
@@ -117,6 +130,7 @@ export function SizePriceRow({
           onChange={setPackSize}
           onBlur={handleBlurSave}
           min={1}
+          disabled={!canEdit}
         />
         <div className="hidden sm:block">{codeField}</div>
         <div className="flex items-center gap-2">

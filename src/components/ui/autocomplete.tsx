@@ -23,6 +23,8 @@ export interface AutocompleteProps {
   emptyMessage?: string;
   disabled?: boolean;
   className?: string;
+  /** Element `id`, for pairing with an external `<label htmlFor>` — without it, a wrapping `FormField`'s label has nothing to actually point at. */
+  id?: string;
 }
 
 /**
@@ -40,6 +42,7 @@ export function Autocomplete({
   emptyMessage = "نتیجه‌ای یافت نشد",
   disabled,
   className,
+  id,
 }: AutocompleteProps) {
   const [open, setOpen] = useState(false);
   const selected = options.find((option) => option.value === value);
@@ -48,6 +51,7 @@ export function Autocomplete({
     <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
       <PopoverPrimitive.Trigger asChild>
         <button
+          id={id}
           type="button"
           disabled={disabled}
           className={cn(

@@ -1,24 +1,33 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { ClipboardList, FileDown, Image as ImageIcon, Plus, Printer, Trash2 } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ChevronDown,
+  ChevronUp,
+  ClipboardList,
+  FileDown,
+  Image as ImageIcon,
+  Package,
+  Printer,
+  Trash2,
+} from "lucide-react";
+import NextImage from "next/image";
 import { useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DatePicker } from "@/components/ui/date-picker";
 import { EmptyState } from "@/components/shared/empty-state";
-import { FormField, Input, NumberInput, Textarea } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { FormField, Input, Textarea } from "@/components/ui/input";
 import { Autocomplete } from "@/components/ui/autocomplete";
 import { toast } from "@/components/ui/toast";
 import { formatJalaliLong } from "@/lib/format/date";
 import { toPersianDigits } from "@/lib/format/persian-digits";
+import { getPieceColor } from "@/lib/product/piece-colors";
 import { getProductForAccountingAction, searchProductsForAccountingAction } from "@/features/products";
+import { AccountingSizeRow } from "@/features/accounting-helper/components/accounting-size-row";
 
-interface LineItem {
-  /** Doubles as the merge key: adding the same variant twice sums quantity into one line instead of duplicating it. */
-  productPieceSizeId: string;
+interface LineItemEntry {
   accountingCode: string;
   quantity: number;
   productName: string;
@@ -29,23 +38,35 @@ interface LineItem {
 /**
  * Fully client-side by design (Accounting Helper brief: "completely
  * independent from Orders, Pre-Invoices and Warehouse operations", no
- * mention of saving/listing past sheets). Nothing here is persisted —
- * the entry sheet exists only in this page's state until exported. Reads
- * flow through the Products module (single source of truth for
- * Design/Piece/Size/Accounting Code); nothing about Orders is touched.
+ * mention of saving/listing past sheets). Only the price/pack-size/
+ * accounting-code edits are persisted (through the same Products actions
+ * Product Details uses); the invoice header and quantities exist only in
+ * this page's state until exported. Reads flow through the Products
+ * module (single source of truth); nothing about Orders is touched.
+ *
+ * Redesigned flow: pick ONE product, see every piece and every size for
+ * it at once (matching the Product Details pricing screen exactly — same
+ * data, same `upsertPieceSizeAction`/`updateAccountingCodeAction`), edit
+ * Accounting Code / Package Size / Unit Price and type a Quantity directly
+ * in the grid — no more cascading Design→Piece→Size dropdowns repeated
+ * per row. The selected product stays selected across every save; only
+ * picking a different product in the Autocomplete changes it. Quantities
+ * accumulate in a cross-product map, so switching products to work on a
+ * second item never loses what was already entered for the first.
  */
 export function AccountingHelper() {
+  const queryClient = useQueryClient();
+
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [invoiceDate, setInvoiceDate] = useState<Date | null>(new Date());
   const [description, setDescription] = useState("");
 
   const [selectedProductId, setSelectedProductId] = useState("");
-  const [selectedPieceId, setSelectedPieceId] = useState("");
-  const [selectedPieceSizeId, setSelectedPieceSizeId] = useState("");
-  const [quantity, setQuantity] = useState<number | "">("");
+  const [collapsedPieceIds, setCollapsedPieceIds] = useState<Set<string>>(new Set());
 
-  const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  /** Keyed by `productPieceSizeId` — survives switching products, so "repeat until the invoice is complete" works across many products, not just the one currently open. */
+  const [lineItems, setLineItems] = useState<Record<string, LineItemEntry>>({});
 
   const sheetRef = useRef<HTMLDivElement>(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -63,8 +84,13 @@ export function AccountingHelper() {
     staleTime: 60_000,
   });
 
-  const { data: selectedProduct, isFetching: isLoadingProduct } = useQuery({
-    queryKey: ["accounting-helper", "product-detail", selectedProductId],
+  const productQueryKey = ["accounting-helper", "product-detail", selectedProductId] as const;
+  const {
+    data: product,
+    isFetching: isLoadingProduct,
+    isError: productLoadFailed,
+  } = useQuery({
+    queryKey: productQueryKey,
     queryFn: async () => {
       const result = await getProductForAccountingAction(selectedProductId);
       if (!result.success) throw new Error(result.error);
@@ -73,76 +99,61 @@ export function AccountingHelper() {
     enabled: selectedProductId !== "",
   });
 
-  const selectedPiece = selectedProduct?.pieces.find((piece) => piece.id === selectedPieceId) ?? null;
-  const selectedSize = selectedPiece?.sizes.find((size) => size.productPieceSizeId === selectedPieceSizeId) ?? null;
-
   function handleSelectProduct(productId: string) {
     setSelectedProductId(productId);
-    setSelectedPieceId("");
-    setSelectedPieceSizeId("");
+    setCollapsedPieceIds(new Set()); // every piece starts expanded for a newly opened product
   }
 
-  function handleSelectPiece(pieceId: string) {
-    setSelectedPieceId(pieceId);
-    setSelectedPieceSizeId("");
+  /** After any successful price/pack-size/code save — a first-time price save creates a brand-new `productPieceSizeId` server-side that the row can't know until this refetch lands. No manual refresh needed: React Query swaps the fresh data in as soon as it arrives. */
+  function refetchProduct() {
+    queryClient.invalidateQueries({ queryKey: productQueryKey });
   }
 
-  function handleAddItem() {
-    if (!selectedProduct || !selectedPiece || !selectedSize) {
-      toast.error("طرح، قطعه و سایز را انتخاب کنید");
-      return;
-    }
-    if (quantity === "" || quantity <= 0) {
-      toast.error("تعداد را وارد کنید");
-      return;
-    }
-    if (!selectedSize.accountingCode) {
-      toast.error("برای این ترکیب هنوز کد حسابداری تعریف نشده — از صفحه محصولات وارد کنید");
-      return;
-    }
+  function togglePieceCollapsed(pieceId: string) {
+    setCollapsedPieceIds((current) => {
+      const next = new Set(current);
+      if (next.has(pieceId)) next.delete(pieceId);
+      else next.add(pieceId);
+      return next;
+    });
+  }
 
-    const code = selectedSize.accountingCode;
-    const pieceSizeId = selectedSize.productPieceSizeId;
-    const addedQuantity = quantity;
+  function handleQuantityChange(pieceName: string, sizeLabel: string, productPieceSizeId: string, accountingCode: string | null, quantity: number | "") {
+    const qty = quantity === "" ? 0 : quantity;
 
     setLineItems((current) => {
-      const existingIndex = current.findIndex((item) => item.productPieceSizeId === pieceSizeId);
-      if (existingIndex !== -1) {
-        const next = [...current];
-        const existing = next[existingIndex];
-        if (existing) next[existingIndex] = { ...existing, quantity: existing.quantity + addedQuantity };
+      const next = { ...current };
+      if (qty <= 0) {
+        delete next[productPieceSizeId];
         return next;
       }
-      return [
-        ...current,
-        {
-          productPieceSizeId: pieceSizeId,
-          accountingCode: code,
-          quantity: addedQuantity,
-          productName: selectedProduct.name,
-          pieceName: selectedPiece.name,
-          sizeLabel: selectedSize.sizeLabel,
-        },
-      ];
+      if (!accountingCode || !product) return current;
+      next[productPieceSizeId] = { accountingCode, quantity: qty, productName: product.name, pieceName, sizeLabel };
+      return next;
     });
-    setQuantity("");
   }
 
-  function handleRemoveItem(pieceSizeId: string) {
-    setLineItems((current) => current.filter((item) => item.productPieceSizeId !== pieceSizeId));
+  function handleRemoveLineItem(productPieceSizeId: string) {
+    setLineItems((current) => {
+      const next = { ...current };
+      delete next[productPieceSizeId];
+      return next;
+    });
   }
+
+  const lineItemEntries = useMemo(() => Object.entries(lineItems), [lineItems]);
 
   /** The actual "Accounting Entry Sheet" content — grouped by code so a code reused across two variants becomes one summed row, matching what an external accounting system expects to receive per code. */
   const codeRows = useMemo(() => {
     const totals = new Map<string, number>();
-    for (const item of lineItems) {
+    for (const [, item] of lineItemEntries) {
       totals.set(item.accountingCode, (totals.get(item.accountingCode) ?? 0) + item.quantity);
     }
     return Array.from(totals.entries()).map(([accountingCode, totalQuantity]) => ({ accountingCode, totalQuantity }));
-  }, [lineItems]);
+  }, [lineItemEntries]);
 
   function validateBeforeExport(): boolean {
-    if (lineItems.length === 0) {
+    if (lineItemEntries.length === 0) {
       toast.error("حداقل یک قلم اضافه کنید");
       return false;
     }
@@ -211,16 +222,7 @@ export function AccountingHelper() {
     window.print();
   }
 
-  const productSelectOptions = (productOptions ?? []).map((product) => ({
-    value: product.id,
-    label: product.name,
-    description: product.productCode,
-  }));
-  const pieceSelectOptions = (selectedProduct?.pieces ?? []).map((piece) => ({ value: piece.id, label: piece.name }));
-  const sizeSelectOptions = (selectedPiece?.sizes ?? []).map((size) => ({
-    value: size.productPieceSizeId,
-    label: `سایز ${toPersianDigits(size.sizeLabel)}${size.accountingCode ? "" : " (بدون کد حسابداری)"}`,
-  }));
+  const productSelectOptions = (productOptions ?? []).map((p) => ({ value: p.id, label: p.name, description: p.productCode }));
 
   return (
     <div className="flex flex-col gap-6">
@@ -245,72 +247,131 @@ export function AccountingHelper() {
         </Card>
 
         <Card>
-          <h2 className="mb-4 text-h4 font-semibold text-foreground">افزودن قلم</h2>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_1.5fr_1.5fr_1fr_auto] lg:items-end">
-            <FormField label="طرح" htmlFor="design-select">
-              <Autocomplete
-                options={productSelectOptions}
-                value={selectedProductId}
-                onValueChange={handleSelectProduct}
-                placeholder="جستجوی طرح..."
-                searchPlaceholder="نام یا کد طرح..."
-              />
-            </FormField>
-            <FormField label="قطعه" htmlFor="piece-select">
-              <Select
-                id="piece-select"
-                options={pieceSelectOptions}
-                value={selectedPieceId}
-                onValueChange={handleSelectPiece}
-                disabled={!selectedProduct}
-                placeholder={isLoadingProduct ? "در حال بارگذاری..." : "انتخاب قطعه"}
-              />
-            </FormField>
-            <FormField label="سایز" htmlFor="size-select">
-              <Select
-                id="size-select"
-                options={sizeSelectOptions}
-                value={selectedPieceSizeId}
-                onValueChange={setSelectedPieceSizeId}
-                disabled={!selectedPiece}
-                placeholder="انتخاب سایز"
-              />
-            </FormField>
-            <FormField label="تعداد" htmlFor="quantity">
-              <NumberInput
-                id="quantity"
-                aria-label="تعداد"
-                value={quantity}
-                onChange={setQuantity}
-                min={1}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    handleAddItem();
-                  }
-                }}
-              />
-            </FormField>
-            <Button type="button" onClick={handleAddItem}>
-              <Plus className="size-4" />
-              افزودن قلم
-            </Button>
-          </div>
-          {selectedPieceSizeId && selectedSize && !selectedSize.accountingCode ? (
-            <p className="mt-3 text-body-small text-danger">
-              برای این ترکیب کد حسابداری تعریف نشده است — از صفحه محصولات، در ردیف این سایز، کد را ثبت کنید.
-            </p>
-          ) : null}
+          <FormField label="طرح" htmlFor="design-select">
+            <Autocomplete
+              id="design-select"
+              options={productSelectOptions}
+              value={selectedProductId}
+              onValueChange={handleSelectProduct}
+              placeholder="جستجوی طرح..."
+              searchPlaceholder="نام یا کد طرح..."
+              className="max-w-md"
+            />
+          </FormField>
+
+          {selectedProductId === "" ? (
+            <EmptyState
+              icon={Package}
+              title="ابتدا یک طرح انتخاب کنید"
+              description="پس از انتخاب، همه قطعه‌ها و سایزهای آن طرح یکجا نمایش داده می‌شود."
+              className="py-10"
+            />
+          ) : isLoadingProduct && !product ? (
+            <p className="py-10 text-center text-body text-muted-foreground">در حال بارگذاری...</p>
+          ) : productLoadFailed || !product ? (
+            <EmptyState icon={Package} title="این طرح یافت نشد" description="ممکن است حذف شده باشد. طرح دیگری انتخاب کنید." className="py-10" />
+          ) : (
+            <div className="mt-4 rounded-large border border-border">
+              {/*
+               * No `overflow-hidden` on this wrapper: it would clip the
+               * sticky positioning context for the strip/headers below,
+               * silently turning "sticky" into "just scrolls away" — the
+               * one thing this whole section exists to avoid. Square
+               * corners here are the trade-off; rounding is kept on the
+               * wrapper's border instead via each end's own rounding below.
+               */}
+              {/* Always-visible "current product" strip — stays pinned above every piece's own sticky header, so scrolling through a large product never loses track of which design is open. */}
+              <div className="sticky top-0 z-20 flex h-10 items-center gap-2 rounded-t-large border-b border-border bg-surface px-3 text-body-small font-medium text-foreground">
+                <div className="relative size-7 shrink-0 overflow-hidden rounded-full border border-border bg-disabled">
+                  {product.imageFilePath ? (
+                    // unoptimized: /uploads/* is auth-protected, which breaks the
+                    // cookie-less /_next/image optimizer fetch — see invoice-view.tsx.
+                    <NextImage src={product.imageFilePath} alt="" fill sizes="28px" unoptimized className="object-cover" />
+                  ) : (
+                    <div className="flex size-full items-center justify-center">
+                      <Package className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                    </div>
+                  )}
+                </div>
+                <span className="truncate">{product.name}</span>
+                <span dir="ltr" className="text-caption text-muted-foreground">
+                  {product.productCode}
+                </span>
+              </div>
+
+              {product.pieces.length === 0 ? (
+                <p className="p-6 text-center text-body text-muted-foreground">این محصول هنوز قطعه‌ای ندارد.</p>
+              ) : (
+                product.pieces.map((piece) => {
+                  const color = getPieceColor(piece.name);
+                  const isCollapsed = collapsedPieceIds.has(piece.id);
+                  const missingCount = piece.sizes.filter((size) => !size.accountingCode).length;
+
+                  return (
+                    <div key={piece.id}>
+                      {/* Sticky piece header — pinned at top-10 (right below the product strip) while its sizes scroll past; the next piece's header takes over automatically once its section reaches that same offset, per normal CSS sticky stacking. */}
+                      <button
+                        type="button"
+                        onClick={() => togglePieceCollapsed(piece.id)}
+                        className={`sticky top-10 z-10 flex w-full items-center gap-2 border-b border-t px-3 py-2.5 text-start ${color.bg} ${color.border}`}
+                      >
+                        <span className={`size-2.5 shrink-0 rounded-full ${color.dot}`} aria-hidden="true" />
+                        <span className={`text-body-large font-semibold ${color.text}`}>{piece.name}</span>
+                        <span className="text-caption text-muted-foreground">({toPersianDigits(piece.sizes.length)} سایز)</span>
+                        {missingCount > 0 ? (
+                          <span className="text-caption text-warning">{toPersianDigits(missingCount)} بدون کد</span>
+                        ) : null}
+                        <span className="flex-1" />
+                        {isCollapsed ? <ChevronDown className="size-4 text-muted-foreground" /> : <ChevronUp className="size-4 text-muted-foreground" />}
+                      </button>
+
+                      {isCollapsed ? null : (
+                        <div className="divide-y divide-divider bg-surface">
+                          {/* Column labels — desktop only; each row repeats its own labels below `sm` (AccountingSizeRow), same split as SizePriceRow. */}
+                          <div className="hidden gap-x-3 border-b border-divider px-3 py-2 text-body-small text-foreground-secondary sm:grid sm:grid-cols-[3.5rem_1fr_1fr_1fr_1fr]">
+                            <span>سایز</span>
+                            <span>قیمت (تومان)</span>
+                            <span>سایز بسته</span>
+                            <span>کد حسابداری</span>
+                            <span>تعداد (این فاکتور)</span>
+                          </div>
+                          {piece.sizes.map((size) => (
+                            <AccountingSizeRow
+                              key={size.sizeId}
+                              pieceId={piece.id}
+                              productId={product.id}
+                              data={size}
+                              fallbackPackSize={6}
+                              quantity={size.productPieceSizeId ? (lineItems[size.productPieceSizeId]?.quantity ?? "") : ""}
+                              onQuantityChange={(value) =>
+                                size.productPieceSizeId &&
+                                handleQuantityChange(piece.name, size.sizeLabel, size.productPieceSizeId, size.accountingCode, value)
+                              }
+                              onSaved={refetchProduct}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
         </Card>
 
         <Card>
-          <h2 className="mb-4 text-h4 font-semibold text-foreground">اقلام ثبت‌شده</h2>
-          {lineItems.length === 0 ? (
-            <EmptyState icon={ClipboardList} title="هنوز قلمی اضافه نشده" description="طرح، قطعه، سایز و تعداد را انتخاب کنید و «افزودن قلم» را بزنید." />
+          <h2 className="mb-4 text-h4 font-semibold text-foreground">اقلام فاکتور</h2>
+          {lineItemEntries.length === 0 ? (
+            <EmptyState
+              icon={ClipboardList}
+              title="هنوز قلمی اضافه نشده"
+              description="در جدول بالا، برای هر سایز موردنظر یک تعداد وارد کنید — بدون نیاز به دکمه جداگانه."
+            />
           ) : (
             <div className="flex flex-col divide-y divide-divider">
-              {lineItems.map((item) => (
-                <div key={item.productPieceSizeId} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+              {lineItemEntries.map(([productPieceSizeId, item]) => (
+                <div key={productPieceSizeId} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
                   <div className="min-w-0">
                     <p className="text-body font-medium text-foreground">
                       {item.productName} — {item.pieceName} — سایز {toPersianDigits(item.sizeLabel)}
@@ -322,7 +383,7 @@ export function AccountingHelper() {
                   <button
                     type="button"
                     aria-label="حذف قلم"
-                    onClick={() => handleRemoveItem(item.productPieceSizeId)}
+                    onClick={() => handleRemoveLineItem(productPieceSizeId)}
                     className="flex size-9 shrink-0 items-center justify-center rounded-small text-danger hover:bg-danger-light"
                   >
                     <Trash2 className="size-4" />

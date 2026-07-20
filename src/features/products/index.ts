@@ -7,5 +7,10 @@
 export { getProductForOrderAction, searchProductsForOrderAction } from "@/features/products/actions";
 export type { ProductForOrder } from "@/features/products/services";
 
-export { getProductForAccountingAction, searchProductsForAccountingAction } from "@/features/products/actions";
+export {
+  getProductForAccountingAction,
+  searchProductsForAccountingAction,
+  updateAccountingCodeAction,
+  upsertPieceSizeAction,
+} from "@/features/products/actions";
 export type { ProductForAccounting } from "@/features/products/services";

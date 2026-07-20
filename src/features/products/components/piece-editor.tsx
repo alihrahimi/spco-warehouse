@@ -16,20 +16,10 @@ import {
   updatePieceAction,
 } from "@/features/products/actions";
 import { SizePriceRow } from "@/features/products/components/size-price-row";
+import { getPieceColor } from "@/lib/product/piece-colors";
+import type { PieceWithSizes } from "@/features/products/services";
 
-export interface PieceWithSizes {
-  id: string;
-  name: string;
-  sortOrder: number;
-  sizes: {
-    sizeId: string;
-    sizeLabel: string;
-    productPieceSizeId: string | null;
-    unitPrice: number | null;
-    defaultPackSize: number | null;
-    accountingCode: string | null;
-  }[];
-}
+export type { PieceWithSizes };
 
 export interface AllSize {
   id: string;
@@ -48,11 +38,14 @@ export function PieceEditor({
   pieces,
   allSizes,
   defaultPackSize = 6,
+  canEdit = true,
 }: {
   productId: string;
   pieces: PieceWithSizes[];
   allSizes: AllSize[];
   defaultPackSize?: number;
+  /** `products:edit` — Warehouse Staff (view-only) still sees every piece/size/price for reference during order-taking, just none of the add/rename/reorder/delete/price controls. */
+  canEdit?: boolean;
 }) {
   const router = useRouter();
   const confirm = useConfirmDialog();
@@ -125,20 +118,22 @@ export function PieceEditor({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end gap-3">
-        <FormField label="افزودن قطعه جدید" htmlFor="new-piece-name" className="flex-1">
-          <Input
-            id="new-piece-name"
-            value={newPieceName}
-            onChange={(event) => setNewPieceName(event.target.value)}
-            placeholder="مثال: کلاه"
-          />
-        </FormField>
-        <Button type="button" loading={isAddingPiece} onClick={handleAddPiece}>
-          <Plus className="size-4" />
-          افزودن قطعه
-        </Button>
-      </div>
+      {canEdit ? (
+        <div className="flex items-end gap-3">
+          <FormField label="افزودن قطعه جدید" htmlFor="new-piece-name" className="flex-1">
+            <Input
+              id="new-piece-name"
+              value={newPieceName}
+              onChange={(event) => setNewPieceName(event.target.value)}
+              placeholder="مثال: کلاه"
+            />
+          </FormField>
+          <Button type="button" loading={isAddingPiece} onClick={handleAddPiece}>
+            <Plus className="size-4" />
+            افزودن قطعه
+          </Button>
+        </div>
+      ) : null}
 
       {pieces.length === 0 ? (
         <p className="text-body text-muted-foreground">هنوز قطعه‌ای برای این محصول ثبت نشده است.</p>
@@ -147,6 +142,7 @@ export function PieceEditor({
           {pieces.map((piece, index) => {
             const isExpanded = expandedPieceId === piece.id;
             const missingPrice = piece.sizes.some((size) => size.productPieceSizeId === null);
+            const color = getPieceColor(piece.name);
 
             return (
               <div key={piece.id} className="rounded-large border border-border">
@@ -161,6 +157,8 @@ export function PieceEditor({
                     ) : (
                       <ChevronDown className="size-4 text-muted-foreground" />
                     )}
+                    {/* Same color-per-piece-name mapping as Accounting Helper — fast recognition works because it's consistent everywhere, not just within one screen. */}
+                    <span className={`size-2.5 shrink-0 rounded-full ${color.dot}`} aria-hidden="true" />
                     <span className="text-body-large font-medium text-foreground">{piece.name}</span>
                     {missingPrice ? (
                       <span className="flex items-center gap-1 text-body-small text-warning">
@@ -169,51 +167,55 @@ export function PieceEditor({
                       </span>
                     ) : null}
                   </button>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      aria-label="جابجایی به بالا"
-                      disabled={index === 0}
-                      onClick={() => handleMove(piece.id, -1)}
-                      className="flex size-8 items-center justify-center rounded-small text-foreground-secondary hover:bg-hover disabled:opacity-30"
-                    >
-                      <ChevronUp className="size-4" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="جابجایی به پایین"
-                      disabled={index === pieces.length - 1}
-                      onClick={() => handleMove(piece.id, 1)}
-                      className="flex size-8 items-center justify-center rounded-small text-foreground-secondary hover:bg-hover disabled:opacity-30"
-                    >
-                      <ChevronDown className="size-4" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="حذف قطعه"
-                      onClick={() => handleDeletePiece(piece)}
-                      className="flex size-8 items-center justify-center rounded-small text-danger hover:bg-danger-light"
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
-                  </div>
+                  {canEdit ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        aria-label="جابجایی به بالا"
+                        disabled={index === 0}
+                        onClick={() => handleMove(piece.id, -1)}
+                        className="flex size-8 items-center justify-center rounded-small text-foreground-secondary hover:bg-hover disabled:opacity-30"
+                      >
+                        <ChevronUp className="size-4" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="جابجایی به پایین"
+                        disabled={index === pieces.length - 1}
+                        onClick={() => handleMove(piece.id, 1)}
+                        className="flex size-8 items-center justify-center rounded-small text-foreground-secondary hover:bg-hover disabled:opacity-30"
+                      >
+                        <ChevronDown className="size-4" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="حذف قطعه"
+                        onClick={() => handleDeletePiece(piece)}
+                        className="flex size-8 items-center justify-center rounded-small text-danger hover:bg-danger-light"
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
 
                 {isExpanded ? (
                   <div className="border-t border-divider px-4 py-3">
-                    <div className="mb-3 flex items-end gap-3">
-                      <FormField label="نام قطعه" htmlFor={`piece-name-${piece.id}`} className="max-w-xs">
-                        <Input
-                          id={`piece-name-${piece.id}`}
-                          defaultValue={piece.name}
-                          onBlur={(event) => {
-                            if (event.target.value.trim() !== piece.name) {
-                              handleRenamePiece(piece.id, event.target.value.trim());
-                            }
-                          }}
-                        />
-                      </FormField>
-                    </div>
+                    {canEdit ? (
+                      <div className="mb-3 flex items-end gap-3">
+                        <FormField label="نام قطعه" htmlFor={`piece-name-${piece.id}`} className="max-w-xs">
+                          <Input
+                            id={`piece-name-${piece.id}`}
+                            defaultValue={piece.name}
+                            onBlur={(event) => {
+                              if (event.target.value.trim() !== piece.name) {
+                                handleRenamePiece(piece.id, event.target.value.trim());
+                              }
+                            }}
+                          />
+                        </FormField>
+                      </div>
+                    ) : null}
 
                     <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-3 px-0 pb-1 text-body-small text-foreground-secondary sm:grid-cols-[auto_1fr_1fr_1fr_auto]">
                       <span className="w-10">سایز</span>
@@ -223,7 +225,14 @@ export function PieceEditor({
                       <span />
                     </div>
                     {piece.sizes.map((size) => (
-                      <SizePriceRow key={size.sizeId} pieceId={piece.id} productId={productId} data={size} fallbackPackSize={defaultPackSize} />
+                      <SizePriceRow
+                        key={size.sizeId}
+                        pieceId={piece.id}
+                        productId={productId}
+                        data={size}
+                        fallbackPackSize={defaultPackSize}
+                        canEdit={canEdit}
+                      />
                     ))}
                   </div>
                 ) : null}
@@ -238,12 +247,14 @@ export function PieceEditor({
           <p className="text-body-small text-danger">
             هیچ سایزی در سیستم تعریف نشده است — بدون سایز، امکان تعیین قیمت برای هیچ قطعه‌ای وجود ندارد.
           </p>
-          <Button asChild size="compact" variant="danger">
-            <Link href="/products/sizes">
-              <Ruler className="size-4" />
-              تعریف سایزها
-            </Link>
-          </Button>
+          {canEdit ? (
+            <Button asChild size="compact" variant="danger">
+              <Link href="/products/sizes">
+                <Ruler className="size-4" />
+                تعریف سایزها
+              </Link>
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </div>

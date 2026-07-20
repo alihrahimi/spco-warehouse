@@ -10,12 +10,12 @@ import { ProductStatusBadge } from "@/components/shared/product-status-badge";
 import { toPersianDigits } from "@/lib/format/persian-digits";
 import { getCurrentSession } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/auth/permissions";
-import { getAllSizes, getProductDetails } from "@/features/products/services";
+import { buildPieceSizeGrid, getAllSizes, getProductDetails } from "@/features/products/services";
 import { getDefaultPackSize } from "@/features/settings/services";
 import { BulkPriceUpdateTrigger } from "@/features/products/components/bulk-price-update-trigger";
 import { DeleteProductButton } from "@/features/products/components/delete-product-button";
 import { DuplicateProductButton } from "@/features/products/components/duplicate-product-button";
-import { PieceEditor, type PieceWithSizes } from "@/features/products/components/piece-editor";
+import { PieceEditor } from "@/features/products/components/piece-editor";
 import { ProductFavoriteToggle } from "@/features/products/components/product-favorite-toggle";
 import { ProductImageUpload } from "@/features/products/components/product-image-upload";
 import { ProductStatusToggle } from "@/features/products/components/product-status-toggle";
@@ -35,31 +35,19 @@ export default async function ProductDetailsPage({ params }: ProductDetailsPageP
   ]);
   if (!product) notFound();
   const canDelete = Boolean(session && hasPermission(session.user.role, "products:delete"));
+  // `products:edit` — Warehouse Staff holds only `products:view` and must
+  // see this whole page (they reference prices while taking orders), but
+  // every mutating control below (favorite, status, duplicate, edit, image
+  // upload, and every field inside PieceEditor) calls a Server Action that
+  // throws PERMISSION_DENIED for them. Rendering those controls anyway let
+  // a Warehouse Staff viewer trigger a save that could never succeed — the
+  // save spinner got stuck forever because the thrown error skips the
+  // `setIsSaving(false)` line right after the `await`. Not rendering the
+  // control at all for a role that can't use it is the fix, matching the
+  // `canDelete` pattern already used here.
+  const canEdit = Boolean(session && hasPermission(session.user.role, "products:edit"));
 
-  // Every piece shows a row for every size in the system, whether or not
-  // it's been priced yet — this is what lets PieceEditor flag "قیمتی
-  // تعریف نشده" per SCREEN-SPECS.md §9 instead of silently omitting
-  // unconfigured sizes.
-  const pieces: PieceWithSizes[] = product.pieces.map((piece) => {
-    const configuredBySize = new Map(piece.sizes.map((entry) => [entry.sizeId, entry]));
-
-    return {
-      id: piece.id,
-      name: piece.name,
-      sortOrder: piece.sortOrder,
-      sizes: allSizes.map((size) => {
-        const configured = configuredBySize.get(size.id);
-        return {
-          sizeId: size.id,
-          sizeLabel: size.label,
-          productPieceSizeId: configured?.id ?? null,
-          unitPrice: configured ? Number(configured.unitPrice) : null,
-          defaultPackSize: configured?.defaultPackSize ?? null,
-          accountingCode: configured?.accountingCode ?? null,
-        };
-      }),
-    };
-  });
+  const pieces = buildPieceSizeGrid(product.pieces, allSizes);
 
   const bulkPriceTargets: BulkPriceUpdateTarget[] = product.pieces.flatMap((piece) =>
     piece.sizes.map((entry) => ({
@@ -85,22 +73,26 @@ export default async function ProductDetailsPage({ params }: ProductDetailsPageP
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <ProductFavoriteToggle productId={product.id} isFavorite={product.isFavorite} />
-            <ProductStatusToggle productId={product.id} isActive={product.isActive} />
-            <DuplicateProductButton productId={product.id} productName={product.name} />
-            <Button asChild variant="outline">
-              <Link href={`/products/${product.id}/edit`}>
-                <Pencil className="size-4" />
-                ویرایش
-              </Link>
-            </Button>
+            {canEdit ? (
+              <>
+                <ProductFavoriteToggle productId={product.id} isFavorite={product.isFavorite} />
+                <ProductStatusToggle productId={product.id} isActive={product.isActive} />
+                <DuplicateProductButton productId={product.id} productName={product.name} />
+                <Button asChild variant="outline">
+                  <Link href={`/products/${product.id}/edit`}>
+                    <Pencil className="size-4" />
+                    ویرایش
+                  </Link>
+                </Button>
+              </>
+            ) : null}
             {canDelete ? <DeleteProductButton productId={product.id} productName={product.name} /> : null}
           </div>
         </div>
 
         <Card>
           <div className="flex flex-col gap-6 sm:flex-row">
-            <ProductImageUpload productId={product.id} imageFilePath={product.imageFilePath} />
+            <ProductImageUpload productId={product.id} imageFilePath={product.imageFilePath} canEdit={canEdit} />
             <div className="flex-1">
               <p className="text-body-small text-foreground-secondary">توضیحات</p>
               <p className="mt-1 text-body text-foreground">{product.description || "—"}</p>
@@ -114,9 +106,9 @@ export default async function ProductDetailsPage({ params }: ProductDetailsPageP
         <Card>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-h4 font-semibold text-foreground">قطعه‌ها، سایزها و قیمت‌ها</h2>
-            <BulkPriceUpdateTrigger targets={bulkPriceTargets} />
+            {canEdit ? <BulkPriceUpdateTrigger targets={bulkPriceTargets} /> : null}
           </div>
-          <PieceEditor productId={product.id} pieces={pieces} allSizes={allSizes} defaultPackSize={defaultPackSize} />
+          <PieceEditor productId={product.id} pieces={pieces} allSizes={allSizes} defaultPackSize={defaultPackSize} canEdit={canEdit} />
         </Card>
       </div>
     </PageContainer>
