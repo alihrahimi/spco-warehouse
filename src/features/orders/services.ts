@@ -565,7 +565,19 @@ export async function getOrderDetails(orderId: string) {
     include: {
       customer: true,
       createdBy: { select: { fullName: true } },
-      items: { orderBy: [{ productNameSnapshot: "asc" }, { pieceNameSnapshot: "asc" }, { sizeLabelSnapshot: "asc" }] },
+      // Pieces sort by their catalog sortOrder (the admin-managed order on
+      // the Products page — the single source of truth for piece order),
+      // NOT alphabetically: the display order here must match every other
+      // screen. Sizes likewise by their global sortOrder. Snapshot data is
+      // untouched — this only orders rows for display, via the live
+      // relation the item row already points at.
+      items: {
+        orderBy: [
+          { productNameSnapshot: "asc" },
+          { productPieceSize: { productPiece: { sortOrder: "asc" } } },
+          { productPieceSize: { size: { sortOrder: "asc" } } },
+        ],
+      },
       payments: { where: { deletedAt: null }, orderBy: { paidAt: "desc" }, include: { createdBy: { select: { fullName: true } } } },
       invoiceDocument: true,
     },

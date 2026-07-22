@@ -1,7 +1,9 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { PackageSearch, Trash2, Upload } from "lucide-react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -23,6 +25,27 @@ export function ProductImageUpload({
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const confirm = useConfirmDialog();
+  const queryClient = useQueryClient();
+  const router = useRouter();
+
+  /**
+   * The stale-image bug lived HERE, not in storage: every upload already
+   * writes a fresh immutable UUID filename and updates the DB path, so the
+   * server is never stale. But the OLD path kept living in client caches —
+   * React Query's product list / order grid / accounting-helper queries all
+   * hold `imageFilePath`, and the browser's HTTP cache happily keeps
+   * serving the old URL's image (even after its file is deleted server-
+   * side) to whoever still renders that old path. So the previous photo
+   * survived until some unrelated remount refetched. Flushing the React
+   * Query cache wholesale plus refreshing the server-component tree the
+   * instant an image changes makes every consumer pick up the NEW path
+   * immediately — and a new path can never be served stale, because no
+   * cache anywhere has ever seen it.
+   */
+  function invalidateEveryImageConsumer() {
+    void queryClient.invalidateQueries();
+    router.refresh();
+  }
 
   async function handleFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -41,6 +64,7 @@ export function ProductImageUpload({
       return;
     }
     setCurrentImage(result.data.imageFilePath);
+    invalidateEveryImageConsumer();
     toast.success("تصویر بروزرسانی شد");
   }
 
@@ -58,6 +82,7 @@ export function ProductImageUpload({
       return;
     }
     setCurrentImage(null);
+    invalidateEveryImageConsumer();
     toast.success("تصویر حذف شد");
   }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ChevronDown, ChevronUp, Plus, Ruler, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronUp, GripVertical, Plus, Ruler, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -16,6 +16,8 @@ import {
   updatePieceAction,
 } from "@/features/products/actions";
 import { SizePriceRow } from "@/features/products/components/size-price-row";
+import { cn } from "@/lib/utils";
+import { toPersianDigits } from "@/lib/format/persian-digits";
 import { getPieceColor } from "@/lib/product/piece-colors";
 import type { PieceWithSizes } from "@/features/products/services";
 
@@ -49,9 +51,14 @@ export function PieceEditor({
 }) {
   const router = useRouter();
   const confirm = useConfirmDialog();
-  const [expandedPieceId, setExpandedPieceId] = useState<string | null>(pieces[0]?.id ?? null);
+  // Collapsed by default and single-expand, matching every other piece
+  // accordion in the app (Order Creation, Accounting Helper) — with 100+
+  // pieces, auto-opening the first one just pushed the rest off screen.
+  const [expandedPieceId, setExpandedPieceId] = useState<string | null>(null);
   const [newPieceName, setNewPieceName] = useState("");
   const [isAddingPiece, setIsAddingPiece] = useState(false);
+  const [draggedPieceId, setDraggedPieceId] = useState<string | null>(null);
+  const [dropTargetPieceId, setDropTargetPieceId] = useState<string | null>(null);
 
   async function handleAddPiece() {
     if (newPieceName.trim().length === 0) {
@@ -98,6 +105,15 @@ export function PieceEditor({
     router.refresh();
   }
 
+  async function persistOrder(orderedIds: string[]) {
+    const result = await reorderPiecesAction(productId, orderedIds);
+    if (!result.success) {
+      toast.error(result.error);
+      return;
+    }
+    router.refresh();
+  }
+
   async function handleMove(pieceId: string, direction: -1 | 1) {
     const index = pieces.findIndex((piece) => piece.id === pieceId);
     const targetIndex = index + direction;
@@ -107,13 +123,25 @@ export function PieceEditor({
     const [moved] = reordered.splice(index, 1);
     if (!moved) return;
     reordered.splice(targetIndex, 0, moved);
+    await persistOrder(reordered.map((piece) => piece.id));
+  }
 
-    const result = await reorderPiecesAction(productId, reordered.map((piece) => piece.id));
-    if (!result.success) {
-      toast.error(result.error);
-      return;
-    }
-    router.refresh();
+  /** Drop `draggedPieceId` into the dragged-over piece's slot — same `reorderPiecesAction` the Move Up/Down buttons use, so both paths share one persistence story. Native HTML5 DnD (no library): mouse-only, which is fine because the up/down buttons remain the touch-device path. */
+  async function handleDrop(targetPieceId: string) {
+    const sourceId = draggedPieceId;
+    setDraggedPieceId(null);
+    setDropTargetPieceId(null);
+    if (!sourceId || sourceId === targetPieceId) return;
+
+    const sourceIndex = pieces.findIndex((piece) => piece.id === sourceId);
+    const targetIndex = pieces.findIndex((piece) => piece.id === targetPieceId);
+    if (sourceIndex === -1 || targetIndex === -1) return;
+
+    const reordered = [...pieces];
+    const [moved] = reordered.splice(sourceIndex, 1);
+    if (!moved) return;
+    reordered.splice(targetIndex, 0, moved);
+    await persistOrder(reordered.map((piece) => piece.id));
   }
 
   return (
@@ -145,11 +173,49 @@ export function PieceEditor({
             const color = getPieceColor(piece.name);
 
             return (
-              <div key={piece.id} className="rounded-large border border-border">
-                <div className="flex items-center gap-2 px-4 py-3">
+              <div
+                key={piece.id}
+                className={cn(
+                  "rounded-large border",
+                  color.border,
+                  draggedPieceId === piece.id && "opacity-50",
+                  dropTargetPieceId === piece.id && draggedPieceId !== piece.id && "ring-2 ring-primary",
+                )}
+                // Native HTML5 drag & drop for reordering (desktop mice; touch
+                // devices use the Move Up/Down buttons — HTML5 DnD has no
+                // touch events). The whole card is the drop target so aim
+                // doesn't need to be precise.
+                draggable={canEdit}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  setDraggedPieceId(piece.id);
+                }}
+                onDragEnd={() => {
+                  setDraggedPieceId(null);
+                  setDropTargetPieceId(null);
+                }}
+                onDragOver={(event) => {
+                  if (!draggedPieceId || draggedPieceId === piece.id) return;
+                  event.preventDefault(); // required, or the browser refuses the drop
+                  event.dataTransfer.dropEffect = "move";
+                  setDropTargetPieceId(piece.id);
+                }}
+                onDragLeave={() => {
+                  if (dropTargetPieceId === piece.id) setDropTargetPieceId(null);
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  void handleDrop(piece.id);
+                }}
+              >
+                <div className={cn("flex items-center gap-2 rounded-t-large px-4 py-3", color.bg, !isExpanded && "rounded-b-large")}>
+                  {canEdit ? (
+                    <GripVertical className="size-4 shrink-0 cursor-grab text-muted-foreground" aria-hidden="true" />
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => setExpandedPieceId(isExpanded ? null : piece.id)}
+                    aria-expanded={isExpanded}
                     className="flex flex-1 items-center gap-2 text-start"
                   >
                     {isExpanded ? (
@@ -157,9 +223,10 @@ export function PieceEditor({
                     ) : (
                       <ChevronDown className="size-4 text-muted-foreground" />
                     )}
-                    {/* Same color-per-piece-name mapping as Accounting Helper — fast recognition works because it's consistent everywhere, not just within one screen. */}
+                    {/* Same color-per-piece-name mapping as Order Creation and Accounting Helper — fast recognition works because it's consistent everywhere, not just within one screen. */}
                     <span className={`size-2.5 shrink-0 rounded-full ${color.dot}`} aria-hidden="true" />
-                    <span className="text-body-large font-medium text-foreground">{piece.name}</span>
+                    <span className={`text-body-large font-semibold ${color.text}`}>{piece.name}</span>
+                    <span className="text-caption text-muted-foreground">({toPersianDigits(piece.sizes.length)} سایز)</span>
                     {missingPrice ? (
                       <span className="flex items-center gap-1 text-body-small text-warning">
                         <AlertTriangle className="size-3.5" />

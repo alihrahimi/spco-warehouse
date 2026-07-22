@@ -54,11 +54,11 @@ interface LineItemEntry {
  * accumulate in a cross-product map, so switching products to work on a
  * second item never loses what was already entered for the first.
  *
- * Pieces start COLLAPSED, multiple may be open at once, and the
- * expanded set is remembered (keyed by piece id) even across switching
- * products and back — a real catalog product can carry 100+ pieces, and
- * rendering every size row up front made the page physically impossible
- * to navigate (and slow: collapsed pieces render zero size rows).
+ * Pieces start COLLAPSED and exactly one may be open at a time (opening
+ * another auto-collapses it); the open piece is remembered even across
+ * switching products and back — a real catalog product can carry 100+
+ * pieces, and rendering every size row up front made the page physically
+ * impossible to navigate (and slow: collapsed pieces render zero rows).
  */
 export function AccountingHelper() {
   const queryClient = useQueryClient();
@@ -69,7 +69,11 @@ export function AccountingHelper() {
   const [description, setDescription] = useState("");
 
   const [selectedProductId, setSelectedProductId] = useState("");
-  const [expandedPieceIds, setExpandedPieceIds] = useState<Set<string>>(new Set());
+  // Single-expand: opening a piece collapses whichever one was open —
+  // same rule as every other piece accordion in the app (an explicit
+  // revision of the earlier multi-expand behavior, which let the page
+  // grow unmanageably long again with several sections open).
+  const [expandedPieceId, setExpandedPieceId] = useState<string | null>(null);
 
   /** Keyed by `productPieceSizeId` — survives switching products, so "repeat until the invoice is complete" works across many products, not just the one currently open. */
   const [lineItems, setLineItems] = useState<Record<string, LineItemEntry>>({});
@@ -105,10 +109,10 @@ export function AccountingHelper() {
     enabled: selectedProductId !== "",
   });
 
-  // Deliberately does NOT touch `expandedPieceIds`: piece ids are globally
-  // unique, so a newly opened product's pieces are naturally absent from
-  // the set (= collapsed), while returning to a previous product finds its
-  // pieces exactly as the user left them.
+  // Deliberately does NOT touch `expandedPieceId`: piece ids are globally
+  // unique, so a newly opened product's pieces never match it (= all
+  // collapsed), while returning to a previous product finds the piece the
+  // user had open still open.
   function handleSelectProduct(productId: string) {
     setSelectedProductId(productId);
   }
@@ -119,12 +123,7 @@ export function AccountingHelper() {
   }
 
   function togglePieceExpanded(pieceId: string) {
-    setExpandedPieceIds((current) => {
-      const next = new Set(current);
-      if (next.has(pieceId)) next.delete(pieceId);
-      else next.add(pieceId);
-      return next;
-    });
+    setExpandedPieceId((current) => (current === pieceId ? null : pieceId));
   }
 
   function handleQuantityChange(pieceName: string, sizeLabel: string, productPieceSizeId: string, accountingCode: string | null, quantity: number | "") {
@@ -321,7 +320,7 @@ export function AccountingHelper() {
               ) : (
                 product.pieces.map((piece) => {
                   const color = getPieceColor(piece.name);
-                  const isExpanded = expandedPieceIds.has(piece.id);
+                  const isExpanded = expandedPieceId === piece.id;
                   const missingCount = piece.sizes.filter((size) => !size.accountingCode).length;
                   // Quantities already typed into THIS invoice for this piece —
                   // shown on the collapsed header so entered work never

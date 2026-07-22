@@ -39,16 +39,15 @@ export function OrderProductGrid({
 }) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 250);
-  const [expandedPieceIds, setExpandedPieceIds] = useState<Set<string>>(new Set());
+  // Single-expand: opening a piece collapses whichever one was open (an
+  // explicit revision of the earlier multi-expand behavior — with several
+  // pieces open the page grew unmanageably long again). Clicking the open
+  // piece closes it. Same rule on every piece accordion in the app.
+  const [expandedPieceId, setExpandedPieceId] = useState<string | null>(null);
   const lines = useOrderBuilderStore((state) => state.lines);
 
   function togglePieceExpanded(pieceId: string) {
-    setExpandedPieceIds((current) => {
-      const next = new Set(current);
-      if (next.has(pieceId)) next.delete(pieceId);
-      else next.add(pieceId);
-      return next;
-    });
+    setExpandedPieceId((current) => (current === pieceId ? null : pieceId));
   }
 
   const { data: products, isLoading } = useQuery({
@@ -106,7 +105,7 @@ export function OrderProductGrid({
               itemCount={itemCountFor(product.id)}
               expanded={expandedProductId === product.id}
               onToggle={() => onExpandedChange(expandedProductId === product.id ? null : product.id)}
-              expandedPieceIds={expandedPieceIds}
+              expandedPieceId={expandedPieceId}
               onTogglePiece={togglePieceExpanded}
             />
           ))}
@@ -124,7 +123,7 @@ function ProductRow({
   itemCount,
   expanded,
   onToggle,
-  expandedPieceIds,
+  expandedPieceId,
   onTogglePiece,
 }: {
   id: string;
@@ -134,7 +133,7 @@ function ProductRow({
   itemCount: number;
   expanded: boolean;
   onToggle: () => void;
-  expandedPieceIds: Set<string>;
+  expandedPieceId: string | null;
   onTogglePiece: (pieceId: string) => void;
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
@@ -189,18 +188,18 @@ function ProductRow({
         <ChevronDown className={cn("size-5 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-180")} />
       </button>
 
-      {expanded ? <ProductRowDetail productId={id} expandedPieceIds={expandedPieceIds} onTogglePiece={onTogglePiece} /> : null}
+      {expanded ? <ProductRowDetail productId={id} expandedPieceId={expandedPieceId} onTogglePiece={onTogglePiece} /> : null}
     </div>
   );
 }
 
 function ProductRowDetail({
   productId,
-  expandedPieceIds,
+  expandedPieceId,
   onTogglePiece,
 }: {
   productId: string;
-  expandedPieceIds: Set<string>;
+  expandedPieceId: string | null;
   onTogglePiece: (pieceId: string) => void;
 }) {
   const setLine = useOrderBuilderStore((state) => state.setLine);
@@ -237,7 +236,7 @@ function ProductRowDetail({
     <div className="flex flex-col gap-3 border-t border-divider p-3">
       {product.pieces.map((piece) => {
         const color = getPieceColor(piece.name);
-        const isExpanded = expandedPieceIds.has(piece.id);
+        const isExpanded = expandedPieceId === piece.id;
         // Lines already entered for this piece — surfaced on the collapsed
         // header so typed quantities never become invisible just because
         // their section is closed.

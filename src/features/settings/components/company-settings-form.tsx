@@ -90,6 +90,11 @@ export function CompanySettingsForm({ initial }: { initial: CompanySettingsView 
       return;
     }
     setLogo(result.data.logoFilePath);
+    // Same stale-image class of bug as product photos: the TopNav logo is
+    // rendered by the (server) dashboard layout, which the router caches —
+    // without a refresh the OLD logo path keeps rendering there until some
+    // later navigation. See product-image-upload.tsx for the full story.
+    router.refresh();
     toast.success("لوگو بروزرسانی شد");
   }
 

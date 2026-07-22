@@ -55,7 +55,21 @@ export interface InvoiceRenderData {
 export async function getInvoiceRenderData(orderId: string): Promise<ServiceResult<InvoiceRenderData>> {
   const order = await db.order.findUnique({
     where: { id: orderId, deletedAt: null },
-    include: { customer: true, items: true, invoiceDocument: true },
+    include: {
+      customer: true,
+      // Same display ordering as getOrderDetails: pieces by their catalog
+      // sortOrder (the admin-managed order — one source of truth), sizes
+      // by global size order. Only ordering — every printed VALUE still
+      // comes from the frozen snapshots below.
+      items: {
+        orderBy: [
+          { productNameSnapshot: "asc" },
+          { productPieceSize: { productPiece: { sortOrder: "asc" } } },
+          { productPieceSize: { size: { sortOrder: "asc" } } },
+        ],
+      },
+      invoiceDocument: true,
+    },
   });
   if (!order) return { success: false, error: "سفارش یافت نشد" };
   if (!order.invoiceDocument || !order.orderNumber) {
