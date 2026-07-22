@@ -44,8 +44,8 @@ interface LineItemEntry {
  * this page's state until exported. Reads flow through the Products
  * module (single source of truth); nothing about Orders is touched.
  *
- * Redesigned flow: pick ONE product, see every piece and every size for
- * it at once (matching the Product Details pricing screen exactly — same
+ * Redesigned flow: pick ONE product, see every piece at once as an
+ * accordion (matching the Product Details pricing screen exactly — same
  * data, same `upsertPieceSizeAction`/`updateAccountingCodeAction`), edit
  * Accounting Code / Package Size / Unit Price and type a Quantity directly
  * in the grid — no more cascading Design→Piece→Size dropdowns repeated
@@ -53,6 +53,12 @@ interface LineItemEntry {
  * picking a different product in the Autocomplete changes it. Quantities
  * accumulate in a cross-product map, so switching products to work on a
  * second item never loses what was already entered for the first.
+ *
+ * Pieces start COLLAPSED, multiple may be open at once, and the
+ * expanded set is remembered (keyed by piece id) even across switching
+ * products and back — a real catalog product can carry 100+ pieces, and
+ * rendering every size row up front made the page physically impossible
+ * to navigate (and slow: collapsed pieces render zero size rows).
  */
 export function AccountingHelper() {
   const queryClient = useQueryClient();
@@ -63,7 +69,7 @@ export function AccountingHelper() {
   const [description, setDescription] = useState("");
 
   const [selectedProductId, setSelectedProductId] = useState("");
-  const [collapsedPieceIds, setCollapsedPieceIds] = useState<Set<string>>(new Set());
+  const [expandedPieceIds, setExpandedPieceIds] = useState<Set<string>>(new Set());
 
   /** Keyed by `productPieceSizeId` — survives switching products, so "repeat until the invoice is complete" works across many products, not just the one currently open. */
   const [lineItems, setLineItems] = useState<Record<string, LineItemEntry>>({});
@@ -99,9 +105,12 @@ export function AccountingHelper() {
     enabled: selectedProductId !== "",
   });
 
+  // Deliberately does NOT touch `expandedPieceIds`: piece ids are globally
+  // unique, so a newly opened product's pieces are naturally absent from
+  // the set (= collapsed), while returning to a previous product finds its
+  // pieces exactly as the user left them.
   function handleSelectProduct(productId: string) {
     setSelectedProductId(productId);
-    setCollapsedPieceIds(new Set()); // every piece starts expanded for a newly opened product
   }
 
   /** After any successful price/pack-size/code save — a first-time price save creates a brand-new `productPieceSizeId` server-side that the row can't know until this refetch lands. No manual refresh needed: React Query swaps the fresh data in as soon as it arrives. */
@@ -109,8 +118,8 @@ export function AccountingHelper() {
     queryClient.invalidateQueries({ queryKey: productQueryKey });
   }
 
-  function togglePieceCollapsed(pieceId: string) {
-    setCollapsedPieceIds((current) => {
+  function togglePieceExpanded(pieceId: string) {
+    setExpandedPieceIds((current) => {
       const next = new Set(current);
       if (next.has(pieceId)) next.delete(pieceId);
       else next.add(pieceId);
@@ -247,7 +256,15 @@ export function AccountingHelper() {
         </Card>
 
         <Card>
-          <FormField label="طرح" htmlFor="design-select">
+          {/*
+           * Sticky product-selector toolbar. First child of the Card, so
+           * -mx-4/-mt-4 cancel the Card's own p-4 and the strip spans the
+           * card edge-to-edge while stuck; px-4/py-3 restore its own inset.
+           * Height (py-3×2 + 52px trigger = 76px) is the offset the product
+           * strip below sticks at, and 76+40 = 116px is where each piece
+           * header sticks — three stacked pinned layers, never overlapping.
+           */}
+          <div className="sticky top-0 z-30 -mx-4 -mt-4 rounded-t-large bg-surface px-4 py-3 shadow-[var(--shadow-elevation-2)]">
             <Autocomplete
               id="design-select"
               options={productSelectOptions}
@@ -257,13 +274,13 @@ export function AccountingHelper() {
               searchPlaceholder="نام یا کد طرح..."
               className="max-w-md"
             />
-          </FormField>
+          </div>
 
           {selectedProductId === "" ? (
             <EmptyState
               icon={Package}
               title="ابتدا یک طرح انتخاب کنید"
-              description="پس از انتخاب، همه قطعه‌ها و سایزهای آن طرح یکجا نمایش داده می‌شود."
+              description="پس از انتخاب، قطعه‌های آن طرح فهرست می‌شوند — روی هر قطعه بزنید تا سایزهای آن باز شود."
               className="py-10"
             />
           ) : isLoadingProduct && !product ? (
@@ -280,8 +297,8 @@ export function AccountingHelper() {
                * corners here are the trade-off; rounding is kept on the
                * wrapper's border instead via each end's own rounding below.
                */}
-              {/* Always-visible "current product" strip — stays pinned above every piece's own sticky header, so scrolling through a large product never loses track of which design is open. */}
-              <div className="sticky top-0 z-20 flex h-10 items-center gap-2 rounded-t-large border-b border-border bg-surface px-3 text-body-small font-medium text-foreground">
+              {/* Always-visible "current product" strip — pinned right below the 76px selector toolbar, above every piece's own sticky header, so scrolling through a large product never loses track of which design is open. */}
+              <div className="sticky top-[76px] z-20 flex h-10 items-center gap-2 rounded-t-large border-b border-border bg-surface px-3 text-body-small font-medium text-foreground">
                 <div className="relative size-7 shrink-0 overflow-hidden rounded-full border border-border bg-disabled">
                   {product.imageFilePath ? (
                     // unoptimized: /uploads/* is auth-protected, which breaks the
@@ -304,16 +321,23 @@ export function AccountingHelper() {
               ) : (
                 product.pieces.map((piece) => {
                   const color = getPieceColor(piece.name);
-                  const isCollapsed = collapsedPieceIds.has(piece.id);
+                  const isExpanded = expandedPieceIds.has(piece.id);
                   const missingCount = piece.sizes.filter((size) => !size.accountingCode).length;
+                  // Quantities already typed into THIS invoice for this piece —
+                  // shown on the collapsed header so entered work never
+                  // becomes invisible just because its section is closed.
+                  const enteredCount = piece.sizes.filter(
+                    (size) => size.productPieceSizeId && lineItems[size.productPieceSizeId],
+                  ).length;
 
                   return (
                     <div key={piece.id}>
-                      {/* Sticky piece header — pinned at top-10 (right below the product strip) while its sizes scroll past; the next piece's header takes over automatically once its section reaches that same offset, per normal CSS sticky stacking. */}
+                      {/* Sticky piece header — pinned at 116px (right below the toolbar + product strip) while its sizes scroll past; the next piece's header takes over automatically once its section reaches that same offset, per normal CSS sticky stacking. */}
                       <button
                         type="button"
-                        onClick={() => togglePieceCollapsed(piece.id)}
-                        className={`sticky top-10 z-10 flex w-full items-center gap-2 border-b border-t px-3 py-2.5 text-start ${color.bg} ${color.border}`}
+                        onClick={() => togglePieceExpanded(piece.id)}
+                        aria-expanded={isExpanded}
+                        className={`sticky top-[116px] z-10 flex w-full items-center gap-2 border-b border-t px-3 py-2.5 text-start ${color.bg} ${color.border}`}
                       >
                         <span className={`size-2.5 shrink-0 rounded-full ${color.dot}`} aria-hidden="true" />
                         <span className={`text-body-large font-semibold ${color.text}`}>{piece.name}</span>
@@ -322,10 +346,15 @@ export function AccountingHelper() {
                           <span className="text-caption text-warning">{toPersianDigits(missingCount)} بدون کد</span>
                         ) : null}
                         <span className="flex-1" />
-                        {isCollapsed ? <ChevronDown className="size-4 text-muted-foreground" /> : <ChevronUp className="size-4 text-muted-foreground" />}
+                        {enteredCount > 0 ? (
+                          <span className="rounded-full bg-primary-light px-2 py-0.5 text-caption font-medium text-primary">
+                            {toPersianDigits(enteredCount)} قلم
+                          </span>
+                        ) : null}
+                        {isExpanded ? <ChevronUp className="size-4 text-muted-foreground" /> : <ChevronDown className="size-4 text-muted-foreground" />}
                       </button>
 
-                      {isCollapsed ? null : (
+                      {!isExpanded ? null : (
                         <div className="divide-y divide-divider bg-surface">
                           {/* Column labels — desktop only; each row repeats its own labels below `sm` (AccountingSizeRow), same split as SizePriceRow. */}
                           <div className="hidden gap-x-3 border-b border-divider px-3 py-2 text-body-small text-foreground-secondary sm:grid sm:grid-cols-[3.5rem_1fr_1fr_1fr_1fr]">

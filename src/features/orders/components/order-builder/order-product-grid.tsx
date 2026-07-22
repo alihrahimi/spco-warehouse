@@ -12,19 +12,23 @@ import { useDebounce } from "@/hooks/use-debounce";
 import { cn } from "@/lib/utils";
 import { formatToman } from "@/lib/format/currency";
 import { toPersianDigits } from "@/lib/format/persian-digits";
+import { getPieceColor } from "@/lib/product/piece-colors";
 import { searchProductsForOrderAction, getProductForOrderAction } from "@/features/products";
 import { useOrderBuilderStore } from "@/store/order-builder-store";
 
 /**
  * The core order-entry interaction (final-revision requirement #7) —
  * deliberately NOT a dialog. Every product is a row in one list; tapping
- * a row expands it in place to show ALL its pieces and ALL their sizes at
- * once, each size with pack and unit inputs bound directly to the order
- * store — typing a number updates the order immediately, with no separate
- * "add to order" step, no popup, no page navigation. Only one product is
- * expanded at a time (a 15-piece × 4-size product is already 60+ input
- * pairs; keeping the rest collapsed is what makes this fast on a tablet
- * rather than an endless scroll).
+ * a row expands it in place, each size with pack and unit inputs bound
+ * directly to the order store — typing a number updates the order
+ * immediately, with no separate "add to order" step, no popup, no page
+ * navigation. Only one product is expanded at a time, and within it each
+ * PIECE is its own collapsed-by-default accordion section (multiple may
+ * be open): a 100-piece product would otherwise render thousands of
+ * input pairs at once, which is unnavigable AND slow. Collapsed pieces
+ * render zero size rows. The expanded set lives up here (not in
+ * ProductRowDetail) so it survives collapsing/reopening a product row —
+ * the user's layout stays exactly as they left it for the whole visit.
  */
 export function OrderProductGrid({
   expandedProductId,
@@ -35,7 +39,17 @@ export function OrderProductGrid({
 }) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 250);
+  const [expandedPieceIds, setExpandedPieceIds] = useState<Set<string>>(new Set());
   const lines = useOrderBuilderStore((state) => state.lines);
+
+  function togglePieceExpanded(pieceId: string) {
+    setExpandedPieceIds((current) => {
+      const next = new Set(current);
+      if (next.has(pieceId)) next.delete(pieceId);
+      else next.add(pieceId);
+      return next;
+    });
+  }
 
   const { data: products, isLoading } = useQuery({
     queryKey: ["orders", "product-grid", debouncedSearch],
@@ -92,6 +106,8 @@ export function OrderProductGrid({
               itemCount={itemCountFor(product.id)}
               expanded={expandedProductId === product.id}
               onToggle={() => onExpandedChange(expandedProductId === product.id ? null : product.id)}
+              expandedPieceIds={expandedPieceIds}
+              onTogglePiece={togglePieceExpanded}
             />
           ))}
         </div>
@@ -108,6 +124,8 @@ function ProductRow({
   itemCount,
   expanded,
   onToggle,
+  expandedPieceIds,
+  onTogglePiece,
 }: {
   id: string;
   name: string;
@@ -116,6 +134,8 @@ function ProductRow({
   itemCount: number;
   expanded: boolean;
   onToggle: () => void;
+  expandedPieceIds: Set<string>;
+  onTogglePiece: (pieceId: string) => void;
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
 
@@ -169,12 +189,20 @@ function ProductRow({
         <ChevronDown className={cn("size-5 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-180")} />
       </button>
 
-      {expanded ? <ProductRowDetail productId={id} /> : null}
+      {expanded ? <ProductRowDetail productId={id} expandedPieceIds={expandedPieceIds} onTogglePiece={onTogglePiece} /> : null}
     </div>
   );
 }
 
-function ProductRowDetail({ productId }: { productId: string }) {
+function ProductRowDetail({
+  productId,
+  expandedPieceIds,
+  onTogglePiece,
+}: {
+  productId: string;
+  expandedPieceIds: Set<string>;
+  onTogglePiece: (pieceId: string) => void;
+}) {
   const setLine = useOrderBuilderStore((state) => state.setLine);
   const lines = useOrderBuilderStore((state) => state.lines);
 
@@ -207,10 +235,39 @@ function ProductRowDetail({ productId }: { productId: string }) {
 
   return (
     <div className="flex flex-col gap-3 border-t border-divider p-3">
-      {product.pieces.map((piece) => (
-        <div key={piece.id} className="rounded-medium border border-divider">
-          <p className="border-b border-divider bg-background px-3 py-2 text-body font-semibold text-foreground">{piece.name}</p>
-          <div className="flex flex-col divide-y divide-divider">
+      {product.pieces.map((piece) => {
+        const color = getPieceColor(piece.name);
+        const isExpanded = expandedPieceIds.has(piece.id);
+        // Lines already entered for this piece — surfaced on the collapsed
+        // header so typed quantities never become invisible just because
+        // their section is closed.
+        const enteredCount = piece.sizes.filter((size) => {
+          const line = lines[size.productPieceSizeId];
+          return line && (line.packQuantity > 0 || line.unitQuantity > 0);
+        }).length;
+
+        return (
+        <div key={piece.id} className={cn("rounded-medium border", color.border)}>
+          {/* Same name→color mapping as Product Details and Accounting Helper (lib/product/piece-colors) — a piece is recognizable by hue before its label is read, everywhere it appears. */}
+          <button
+            type="button"
+            onClick={() => onTogglePiece(piece.id)}
+            aria-expanded={isExpanded}
+            className={cn("flex w-full items-center gap-2 rounded-t-medium px-3 py-2.5 text-start", color.bg, !isExpanded && "rounded-b-medium")}
+          >
+            <span className={cn("size-2.5 shrink-0 rounded-full", color.dot)} aria-hidden="true" />
+            <span className={cn("text-body font-semibold", color.text)}>{piece.name}</span>
+            <span className="text-caption text-muted-foreground">({toPersianDigits(piece.sizes.length)} سایز)</span>
+            <span className="flex-1" />
+            {enteredCount > 0 ? (
+              <span className="rounded-full bg-primary-light px-2 py-0.5 text-caption font-medium text-primary">
+                {toPersianDigits(enteredCount)} قلم
+              </span>
+            ) : null}
+            <ChevronDown className={cn("size-4 shrink-0 text-muted-foreground transition-transform", isExpanded && "rotate-180")} />
+          </button>
+          {!isExpanded ? null : (
+          <div className={cn("flex flex-col divide-y divide-divider border-t", color.border)}>
             {piece.sizes.map((size) => {
               const line = lines[size.productPieceSizeId];
               const packQuantity = line?.packQuantity ?? 0;
@@ -277,8 +334,10 @@ function ProductRowDetail({ productId }: { productId: string }) {
               );
             })}
           </div>
+          )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
